@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Playwright smoke-test output (regenerated on every test run)
+test_screenshots/
+
+# Ad-hoc reference screenshots dropped in the repo root
+image*.png
