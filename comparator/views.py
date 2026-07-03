@@ -41,8 +41,16 @@ def compare(request):
             status=400,
         )
 
+    settings = body.get('settings')
+    if not isinstance(settings, dict):
+        settings = None
+
+    exclusions = body.get('exclusions')
+    if not isinstance(exclusions, dict):
+        exclusions = None
+
     try:
-        result = find_correspondences(left_dir, right_dir)
+        result = find_correspondences(left_dir, right_dir, settings, exclusions)
     except ValueError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
     except Exception as exc:

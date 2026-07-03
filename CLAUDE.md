@@ -91,7 +91,7 @@ WorkspaceComparator/
 This is the heart of the app. Entry point: `comparator/services/correspondence.py :: find_correspondences(left_dir, right_dir)`.
 
 ### Step 0 — Scan (`file_scanner.py`)
-`scan_directory()` walks each tree with `os.walk`, keeping only files whose extension is in `SOURCE_EXTENSIONS` (C family, Java, Rust, C#, Go, Kotlin/Scala, Swift/Obj-C, Python, JS/TS, plus config: `.gradle .xml .properties .yaml .yml .toml`). It **prunes** noise dirs (`SKIP_DIRS`: `node_modules`, `.git`, `target`, `build`, `dist`, `bin`, `obj`, `.idea`, `.vscode`, plus Python environments `site-packages`/`venv`/`env`/`envs`/`virtualenv` — an embedded runtime brings thousands of third-party `__init__.py` files that explode Phase 2) and any dotfile dir. Each hit becomes a `FileInfo(filename, relative_dir, full_path, extension)`. Relative dirs are normalized to forward slashes; root-level dir is `''`.
+`scan_directory()` walks each tree with `os.walk`, keeping only files whose extension is in `SOURCE_EXTENSIONS` (C family, Java, Rust, C#, Go, Kotlin/Scala, Swift/Obj-C, Python, JS/TS, plus config: `.gradle .xml .properties .yaml .yml .toml`). It **prunes** noise dirs (`SKIP_DIRS`: `node_modules`, `.git`, `target`, `build`, `dist`, `bin`, `obj`, `.idea`, `.vscode`, plus Python environments `site-packages`/`venv`/`env`/`envs`/`virtualenv` — an embedded runtime brings thousands of third-party `__init__.py` files that explode Phase 2) and any dotfile dir. `scan_directory(root, exclusions=None)` also accepts **user exclusions** (`{'files': [...], 'dirs': [...]}` fnmatch wildcards from the UI's 🚫 Exclusions dialog): matching directories are pruned from the walk (contents never scanned), matching files skipped; patterns containing `/` match the forward-slash relative path, plain patterns match the basename anywhere. Each hit becomes a `FileInfo(filename, relative_dir, full_path, extension)`. Relative dirs are normalized to forward slashes; root-level dir is `''`.
 
 ### The 4 phases
 Matching is **greedy and order-dependent**. Files start "free"; once matched, both sides are removed from the free pool. Phases run in sequence, each consuming from what the previous left behind:
@@ -99,9 +99,10 @@ Matching is **greedy and order-dependent**. Files start "free"; once matched, bo
 - **Phase 1 — Exact path match.** Same filename **and** same `relative_dir`. Instant match, `similarity=100`, `match_type='exact_path'`. Highest confidence.
 - **Phase 2 — Same filename, different directory.** For each remaining left file, *all* right files with the same filename are scored deterministically first (sorted best-first). If any has `confidence=='high'` and `similarity > 85` → accept as `deterministic`, no LLM. Otherwise **ask the LLM** for at most the top `MAX_LLM_PER_FILE` (3) candidates whose deterministic sim clears the `LLM_MIN_SIM` (15) noise floor; a score `>= 70` → accept as `llm_verified`. If the LLM is unreachable (returns `-1`) but deterministic `> 40`, fall back to accepting as `deterministic`. The bound matters: without it, boilerplate names (`__init__.py`, `index.js`) with hundreds of same-named candidates trigger one LLM round-trip *each* and a compare never finishes.
 - **Phase 3 — Similar filename (fuzzy), same extension.** For still-unmatched files, compare filenames with `compute_filename_similarity` (SequenceMatcher on the base name). Require `>= 0.70` similarity and matching extension. Score = `filename_sim*30 + content_sim*0.70` (a blended heuristic). Candidates are collected and sorted by combined score first; a high-confidence deterministic candidate auto-accepts, else medium/low candidates with filename sim `> 0.80` escalate to the LLM under the same `MAX_LLM_PER_FILE` / `LLM_MIN_SIM` bounds.
+- **Phase 3b — Renamed files (content-only).** Leftovers whose filenames are too different for Phase 3 are swept purely by content: same extension + deterministic similarity `>= CONTENT_SIM_THRESHOLD` (60) → match with `match_type='content'` (the UI labels these rows "Renamed"). A cheap length-ratio bound prunes the O(L·R) sweep before any expensive comparison. No LLM involvement.
 - **Phase 4 — Leftovers.** Everything still free is reported as `unmatched_left` / `unmatched_right`.
 
-Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, and a `stats` dict (`total_left/right`, `exact_path_matches`, `deterministic_matches`, `llm_matches`, `llm_calls`). Matched + unmatched lists are sorted alphabetically by filename at the end.
+Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, and a `stats` dict (`total_left/right`, `exact_path_matches`, `deterministic_matches`, `llm_matches`, `llm_calls`). Sorting anchors on the **left side** (the user's original project): primary key = left filename, secondary key = left directory — the right file follows its partner even when its own name is completely different. Unmatched lists sort by (filename, directory) on their own side.
 
 ### Tunable thresholds (top of `correspondence.py`)
 ```python
@@ -112,8 +113,9 @@ FILENAME_SIM_THRESHOLD  = 0.70   # minimum filename similarity to consider in Ph
 LLM_FAILURE_LIMIT       = 3      # consecutive LLM failures before the _LLMGate breaker trips
 MAX_LLM_PER_FILE        = 3      # LLM-arbitrate only the top-N candidates per left file
 LLM_MIN_SIM             = 15.0   # noise floor: don't LLM-arbitrate near-zero deterministic scores
+CONTENT_SIM_THRESHOLD   = 60.0   # Phase 3b: content-only match threshold for renamed files
 ```
-If someone reports "too many / too few matches," these four constants are the first knobs to turn.
+If someone reports "too many / too few matches," these constants are the first knobs to turn. The last four (`LLM_FAILURE_LIMIT`, `MAX_LLM_PER_FILE`, `LLM_MIN_SIM`, `CONTENT_SIM_THRESHOLD`) are **defaults only**: the UI's ⚙ Engine Settings dialog (persisted in `localStorage`, disabled while a comparison runs) sends per-request overrides in the compare body, resolved and clamped by `resolve_settings()` / `SETTING_BOUNDS`.
 
 ### Deterministic scoring (`deterministic.py`)
 `compute_similarity(content1, content2, ext) -> (pct, confidence)`:
@@ -172,7 +174,7 @@ MAX_PAIR_AREA  = 2500   # L*R above this -> cheap sequential pairing (perf guard
 | Method | Path | View | Purpose |
 |---|---|---|---|
 | GET | `/` | `index` | Render main comparison page |
-| POST | `/api/compare/` | `compare` | Body `{left_dir, right_dir}` → JSON of matched/unmatched/stats. `@csrf_exempt`. |
+| POST | `/api/compare/` | `compare` | Body `{left_dir, right_dir, settings?, exclusions?}` → JSON of matched/unmatched/stats. `settings` optionally overrides the tunable engine constants for that run (keys = `SETTING_BOUNDS` in `correspondence.py`: `llm_failure_limit`, `max_llm_per_file`, `llm_min_sim`, `content_sim_threshold`); values are clamped, unknown keys ignored, effective values echoed back in `stats.settings`. `exclusions` is `{files: [...], dirs: [...]}` wildcard patterns (fnmatch; patterns with `/` match relative paths, plain patterns match basenames anywhere); matching items are pruned from both scans and never appear in results — normalized by `normalize_exclusions()` in `file_scanner.py` (caps: 200 patterns, 300 chars) and echoed back in `stats.exclusions`. `@csrf_exempt`. |
 | GET | `/api/browse/?path=` | `browse` | Directory picker backend. No `path` → drive letters (Windows) or `/` (Unix). Returns `{entries:[{name,path}], current, parent}`. Skips dotfiles + `node_modules`/`__pycache__`/`$recycle.bin`/etc. Returns 403 on `PermissionError`. |
 | GET | `/file-compare/?left=&right=` | `file_compare` | Render the BC-style diff viewer. Also accepts `?unmatched=left\|right` single-file mode. |
 | GET | `/api/file-diff/?left=&right=` | `file_diff` | **Aligned-row diff JSON** (shape below). `?unmatched=left\|right` returns one file's raw lines (legacy shape: `left_lines`/`right_lines` + empty `opcodes`). |
@@ -202,7 +204,7 @@ Inside `replace` blocks, `_align_replace()` recursively anchors on the best-matc
 Consequences:
 - To change the look or behavior of the main page, **edit `comparator/templates/comparator/index.html` directly.** Do **not** edit `comparator/static/comparator/*` expecting it to show up — those files are stale/dead (see §8).
 - The JS uses an **event-delegation** pattern: a single capturing `click` listener on `document` reads `data-action="..."` attributes and dispatches in `handleAction()`. When you add a button, give it a `data-action` and add a case — don't attach per-element listeners.
-- `index.html`'s browse **modal is toggled via inline `style.display`** (`"block"`/`"none"`), *not* via a `.hidden` class. Tests assert on `el.style.display`. Keep that mechanism.
+- `index.html`'s browse **modal is toggled via inline `style.display`** (`"block"`/`"none"`), *not* via a `.hidden` class. Tests assert on `el.style.display`. Keep that mechanism. The ⚙ **Engine Settings modal** (`#settingsModal`, opened by `#btnSettings`) follows the same pattern: inline `style.display`, `data-action="settings-*"` cases in `handleAction()`, four slider+number rows defined in `SETTINGS_DEF` (which must mirror `SETTING_BOUNDS` in `correspondence.py`), values persisted in `localStorage["wcEngineSettings"]` and sent as `settings` in the compare POST. The button is disabled and the dialog force-closed while `APP.comparing` is true. The 🚫 **Exclusions modal** (`#exclusionsModal`, opened by `#btnExclusions`) works the same way: BeyondCompare-style file/folder wildcard pattern lists with per-pattern enable switches, draft-copy semantics (Cancel discards, Accept commits), persisted in `localStorage["wcExclusions"]`, enabled patterns sent as `exclusions` in the compare POST, locked while comparing.
 - Row double-click opens the file-compare page in a new tab. Matched rows carry `data-left-path`/`data-right-path`; unmatched rows carry `data-unmatched-side` + one path.
 - The "Match" column header responds to **double-click** to toggle sorting by content status (`different → minor → identical`). The original order is cached in `APP.lastData`.
 - HTML escaping: `index.html` uses an `esc()` helper (textContent round-trip) plus `escAttr()` for attribute values; `file_compare.html` uses a faster regex-replace `esc()`. Preserve escaping whenever injecting file names, paths, or line content.
@@ -300,6 +302,7 @@ Read this list before you're surprised by something.
 | I want to… | Edit |
 |---|---|
 | Change which file types are scanned | `services/file_scanner.py` → `SOURCE_EXTENSIONS` / `SKIP_DIRS` |
+| Change user-exclusion pattern matching / caps | `services/file_scanner.py` → `normalize_exclusions` / `_excluded` |
 | Make matching stricter/looser | `services/correspondence.py` → the 4 threshold constants |
 | Change how similarity is scored | `services/deterministic.py` → `compute_similarity` (token/identifier blend) |
 | Change the `==`/`~=`/`!=` classification | `services/deterministic.py` → `compute_content_status` |

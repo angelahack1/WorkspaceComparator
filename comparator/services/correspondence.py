@@ -26,7 +26,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from .file_scanner import FileInfo, scan_directory
+from .file_scanner import FileInfo, normalize_exclusions, scan_directory
 from .deterministic import compute_filename_similarity, compute_similarity, compute_content_status
 from .llm_comparator import compare_with_llm, is_ollama_available
 
@@ -40,13 +40,47 @@ FILENAME_SIM_THRESHOLD = 0.70  # Minimum filename similarity for Phase 3
 LLM_FAILURE_LIMIT = 3       # Consecutive LLM failures before bypassing it
 MAX_LLM_PER_FILE = 3        # LLM-arbitrate only the top-N candidates per file
 LLM_MIN_SIM = 15.0          # Noise floor: below this, don't bother the LLM
+CONTENT_SIM_THRESHOLD = 60.0  # Phase 3b: content-only match (renamed files)
+
+# User-tunable engine settings (the UI's Engine Settings dialog sends
+# these in the compare request body).  Values outside the bounds are
+# clamped; unknown keys are ignored.  content_sim_threshold's floor is
+# 10, not 0 -- at ~0 Phase 3b would greedily pair *everything*.
+SETTING_BOUNDS = {
+    'llm_failure_limit':     (1, 20),
+    'max_llm_per_file':      (0, 20),
+    'llm_min_sim':           (0.0, 100.0),
+    'content_sim_threshold': (10.0, 100.0),
+}
+
+
+def resolve_settings(settings: Optional[Dict] = None) -> Dict:
+    """Merge user overrides over the engine defaults, clamped to bounds."""
+    cfg = {
+        'llm_failure_limit': LLM_FAILURE_LIMIT,
+        'max_llm_per_file': MAX_LLM_PER_FILE,
+        'llm_min_sim': LLM_MIN_SIM,
+        'content_sim_threshold': CONTENT_SIM_THRESHOLD,
+    }
+    if not settings:
+        return cfg
+    for key, (lo, hi) in SETTING_BOUNDS.items():
+        if key not in settings:
+            continue
+        try:
+            val = float(settings[key])
+        except (TypeError, ValueError):
+            continue
+        val = max(lo, min(hi, val))
+        cfg[key] = int(round(val)) if isinstance(lo, int) else val
+    return cfg
 
 
 @dataclass
 class MatchResult:
     left_file: FileInfo
     right_file: FileInfo
-    match_type: str   # exact_path | deterministic | llm_verified
+    match_type: str   # exact_path | deterministic | llm_verified | content
     similarity: float
     content_status: str = 'different'  # identical | minor | different
 
@@ -102,9 +136,11 @@ class _LLMGate:
     so the run completes on deterministic scoring alone.
     """
 
-    def __init__(self, stats: Dict, read=_read_file):
+    def __init__(self, stats: Dict, read=_read_file,
+                 failure_limit: int = LLM_FAILURE_LIMIT):
         self.enabled = is_ollama_available()
         self.failures = 0
+        self.failure_limit = failure_limit
         self.stats = stats
         self.read = read
         if not self.enabled:
@@ -121,7 +157,7 @@ class _LLMGate:
         )
         if pct == -1:
             self.failures += 1
-            if self.failures >= LLM_FAILURE_LIMIT:
+            if self.failures >= self.failure_limit:
                 self.enabled = False
                 logger.warning(
                     "LLM arbitration disabled after %d consecutive failures; "
@@ -137,12 +173,28 @@ class _LLMGate:
 # Main entry point
 # ===================================================================
 
-def find_correspondences(left_dir: str, right_dir: str) -> ComparisonResult:
+def find_correspondences(
+    left_dir: str,
+    right_dir: str,
+    settings: Optional[Dict] = None,
+    exclusions: Optional[Dict] = None,
+) -> ComparisonResult:
     """
     Compare two project directories and produce file correspondences.
+
+    `settings` optionally overrides the tunable engine constants for
+    this run (see SETTING_BOUNDS); values are clamped, unknown keys
+    ignored, and the effective values echoed in stats['settings'].
+
+    `exclusions` is an optional {'files': [...], 'dirs': [...]} dict of
+    wildcard patterns; matching files/directories are pruned from BOTH
+    scans, so they take no part in matching and never appear in the
+    results.  Effective patterns are echoed in stats['exclusions'].
     """
-    left_files = scan_directory(left_dir)
-    right_files = scan_directory(right_dir)
+    cfg = resolve_settings(settings)
+    excl = normalize_exclusions(exclusions)
+    left_files = scan_directory(left_dir, excl)
+    right_files = scan_directory(right_dir, excl)
 
     result = ComparisonResult()
     result.stats = {
@@ -152,6 +204,8 @@ def find_correspondences(left_dir: str, right_dir: str) -> ComparisonResult:
         'deterministic_matches': 0,
         'llm_matches': 0,
         'llm_calls': 0,
+        'settings': cfg,
+        'exclusions': excl,
     }
 
     free_left: Set[int] = set(range(len(left_files)))
@@ -167,7 +221,7 @@ def find_correspondences(left_dir: str, right_dir: str) -> ComparisonResult:
             _cache[path] = _read_file(path)
         return _cache[path]
 
-    gate = _LLMGate(result.stats, read)
+    gate = _LLMGate(result.stats, read, cfg['llm_failure_limit'])
 
     # Build lookup indexes
     right_by_name: Dict[str, List[int]] = {}
@@ -241,8 +295,8 @@ def find_correspondences(left_dir: str, right_dir: str) -> ComparisonResult:
 
         if best is None:
             # Ambiguous: arbitrate only the most promising candidates.
-            for sim, confidence, ri in scored[:MAX_LLM_PER_FILE]:
-                if sim < LLM_MIN_SIM:
+            for sim, confidence, ri in scored[:cfg['max_llm_per_file']]:
+                if sim < cfg['llm_min_sim']:
                     break  # sorted desc: everything below is noise
                 rf = right_files[ri]
                 llm_pct = gate.score(lf, rf)
@@ -323,11 +377,11 @@ def find_correspondences(left_dir: str, right_dir: str) -> ComparisonResult:
         if best is None:
             llm_used = 0
             for combined, fname_sim, sim, confidence, ri in cands:
-                if llm_used >= MAX_LLM_PER_FILE:
+                if llm_used >= cfg['max_llm_per_file']:
                     break
                 if confidence not in ('medium', 'low') or fname_sim <= 0.80:
                     continue
-                if sim < LLM_MIN_SIM:
+                if sim < cfg['llm_min_sim']:
                     continue
                 rf = right_files[ri]
                 llm_used += 1
@@ -351,14 +405,66 @@ def find_correspondences(left_dir: str, right_dir: str) -> ComparisonResult:
                 result.stats['deterministic_matches'] += 1
 
     # ------------------------------------------------------------------
+    # PHASE 3b -- renamed files: very different name, same content
+    # ------------------------------------------------------------------
+    # A rename beyond FILENAME_SIM_THRESHOLD never reaches Phase 3, so
+    # sweep the leftovers purely by content: same extension and a
+    # deterministic similarity >= CONTENT_SIM_THRESHOLD pair up no
+    # matter how different the filenames are.  A cheap length bound
+    # prunes most of the O(L*R) sweep before any expensive comparison
+    # (a rename candidate can't be several times larger or smaller).
+    for li in list(free_left):
+        lf = left_files[li]
+        l_len = len(read(lf.full_path))
+        if l_len == 0:
+            continue  # empty/unreadable: content carries no signal
+
+        best: Optional[MatchResult] = None
+        best_sim = 0.0
+        best_ri: Optional[int] = None
+
+        for ri in list(free_right):
+            rf = right_files[ri]
+            if lf.extension != rf.extension:
+                continue
+            r_len = len(read(rf.full_path))
+            if r_len == 0:
+                continue
+            if 200.0 * min(l_len, r_len) / (l_len + r_len) < cfg['content_sim_threshold']:
+                continue
+
+            sim, confidence = _run_deterministic(lf, rf, read)
+            if sim >= cfg['content_sim_threshold'] and sim > best_sim:
+                best_sim = sim
+                status = _content_status(lf, rf, read)
+                best = MatchResult(lf, rf, 'content', sim, content_status=status)
+                best_ri = ri
+
+        if best is not None and best_ri is not None:
+            logger.info(
+                "Phase3b content match %s <-> %s : %.1f%%",
+                lf.relative_path, best.right_file.relative_path, best_sim,
+            )
+            result.matched.append(best)
+            free_left.discard(li)
+            free_right.discard(best_ri)
+            result.stats['deterministic_matches'] += 1
+
+    # ------------------------------------------------------------------
     # PHASE 4 -- collect unmatched
     # ------------------------------------------------------------------
     result.unmatched_left = [left_files[i] for i in sorted(free_left)]
     result.unmatched_right = [right_files[i] for i in sorted(free_right)]
 
-    # Final sorting
-    result.matched.sort(key=lambda m: m.left_file.filename.lower())
-    result.unmatched_left.sort(key=lambda f: f.filename.lower())
-    result.unmatched_right.sort(key=lambda f: f.filename.lower())
+    # Final sorting -- the LEFT side (the user's original project) is
+    # the anchor: primary key = left filename, secondary key = left
+    # directory.  The right file rides along with its partner even when
+    # its own name is completely different (renamed/content matches).
+    result.matched.sort(key=lambda m: (
+        m.left_file.filename.lower(), m.left_file.relative_dir.lower()))
+    result.unmatched_left.sort(key=lambda f: (
+        f.filename.lower(), f.relative_dir.lower()))
+    result.unmatched_right.sort(key=lambda f: (
+        f.filename.lower(), f.relative_dir.lower()))
 
     return result

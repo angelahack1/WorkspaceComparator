@@ -37,6 +37,9 @@
     .btn-compare:not(:disabled):hover { box-shadow: 0 4px 14px rgba(67,97,238,0.5); transform: translateY(-1px); }
     .btn-clear { padding: 0.35rem 1rem; font-size: 0.8rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; color: #666; }
     .btn-clear:hover { background: #f5f5f5; }
+    .btn-settings { padding: 0.35rem 1rem; font-size: 0.8rem; border: 1px solid #b8c4dc; border-radius: 4px; background: #eef1ff; cursor: pointer; color: #3a56d4; font-weight: 600; transition: background 0.15s, opacity 0.2s; }
+    .btn-settings:hover:not(:disabled) { background: #dde4ff; }
+    .btn-settings:disabled { opacity: 0.45; cursor: not-allowed; }
 
     .loading-overlay { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem; gap: 1rem; }
     .loading-overlay p { font-size: 0.95rem; color: #555; }
@@ -90,6 +93,7 @@
     .no-results-row td { text-align: center; padding: 1.5rem; color: #999; font-style: italic; background: #fafafa; }
 
     .error-toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); background: #e74c3c; color: #fff; padding: 0.7rem 1.4rem; border-radius: 6px; font-size: 0.9rem; box-shadow: 0 4px 16px rgba(0,0,0,0.25); z-index: 9999; animation: toastIn 0.3s ease-out; }
+    .error-toast.toast-ok { background: #27ae60; }
     @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
     /* ---- Modal ---- */
@@ -114,6 +118,50 @@
     .modal-ok:hover { background: #3a56d4; }
     .modal-cancel { padding: 0.45rem 1.2rem; font-size: 0.88rem; border: 1px solid #ccc; border-radius: 5px; cursor: pointer; background: #fff; color: #555; }
     .modal-cancel:hover { background: #f0f0f0; }
+
+    /* ---- Engine Settings dialog ---- */
+    .settings-box .modal-top { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #1b2b4d 100%); border-bottom: 2px solid #4361ee; }
+    .settings-body { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.9rem; overflow-y: auto; }
+    .setting-row { border: 1px solid #e2e6ee; border-radius: 10px; padding: 0.7rem 0.9rem 0.8rem; background: linear-gradient(180deg, #fbfcfe, #f4f6fb); transition: border-color 0.15s, box-shadow 0.15s; }
+    .setting-row:hover { border-color: #b8c4dc; box-shadow: 0 2px 8px rgba(67,97,238,0.10); }
+    .setting-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+    .setting-name { font-weight: 600; font-size: 0.88rem; color: #1a1a2e; }
+    .setting-val { font-family: "Consolas", "Courier New", monospace; font-size: 0.82rem; font-weight: 700; color: #fff; background: #4361ee; border-radius: 10px; padding: 0.1rem 0.6rem; min-width: 44px; text-align: center; box-shadow: 0 1px 3px rgba(67,97,238,0.4); }
+    .setting-desc { font-size: 0.74rem; color: #778; line-height: 1.4; margin-bottom: 0.5rem; }
+    .setting-ctrl { display: flex; align-items: center; gap: 0.7rem; }
+    .setting-ctrl input[type="range"] { flex: 1; accent-color: #4361ee; cursor: pointer; }
+    .setting-num { width: 74px; padding: 4px 8px; border: 1px solid #d5dae2; border-radius: 5px; font-family: "Consolas", monospace; font-size: 0.85rem; text-align: right; outline: none; }
+    .setting-num:focus { border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,0.15); }
+    .settings-bottom { display: flex; align-items: center; gap: 0.6rem; padding: 0.8rem 1.2rem; border-top: 1px solid #e0e0e0; background: #fafafa; }
+    .settings-bottom .spacer { flex: 1; }
+    .btn-reset { padding: 0.45rem 1rem; font-size: 0.82rem; border: 1px solid #ccc; border-radius: 5px; cursor: pointer; background: #fff; color: #777; }
+    .btn-reset:hover { background: #f0f0f0; }
+
+    /* ---- Exclusions dialog (BeyondCompare-style name filters) ---- */
+    .excl-box { width: 680px; }
+    .excl-box .modal-top { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #1b2b4d 100%); border-bottom: 2px solid #e74c3c; }
+    .excl-intro { padding: 0.7rem 1.3rem; font-size: 0.76rem; color: #667; background: #f4f6fb; border-bottom: 1px solid #e2e6ee; line-height: 1.5; }
+    .excl-intro code { background: #e8ecf5; border: 1px solid #d5dae5; border-radius: 3px; padding: 0 4px; font-size: 0.74rem; }
+    .excl-columns { display: flex; gap: 0.9rem; padding: 0.9rem 1.3rem; overflow-y: auto; }
+    .excl-col { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid #e2e6ee; border-radius: 10px; background: linear-gradient(180deg, #fbfcfe, #f4f6fb); overflow: hidden; }
+    .excl-col-head { padding: 0.5rem 0.8rem; font-size: 0.82rem; font-weight: 700; color: #fff; background: #2a5d8f; letter-spacing: 0.4px; }
+    .excl-addrow { display: flex; gap: 0.4rem; padding: 0.55rem 0.7rem; border-bottom: 1px solid #e2e6ee; background: #fff; }
+    .excl-addrow input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d5dae2; border-radius: 5px; font-family: "Consolas", monospace; font-size: 0.82rem; outline: none; }
+    .excl-addrow input:focus { border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,0.15); }
+    .excl-addrow button { padding: 4px 12px; border: none; border-radius: 5px; background: #4361ee; color: #fff; font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .excl-addrow button:hover { background: #3a56d4; }
+    .excl-list { min-height: 130px; max-height: 240px; overflow-y: auto; }
+    .excl-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.8rem; border-bottom: 1px solid #eef1f6; }
+    .excl-item:hover { background: #eef3fb; }
+    .excl-switch { width: 30px; height: 16px; border-radius: 8px; background: #4361ee; position: relative; cursor: pointer; flex-shrink: 0; transition: background 0.15s; box-shadow: inset 0 1px 2px rgba(0,0,0,0.2); }
+    .excl-switch::after { content: ""; position: absolute; top: 2px; left: 16px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+    .excl-item.excl-off .excl-switch { background: #b8bec9; }
+    .excl-item.excl-off .excl-switch::after { left: 2px; }
+    .excl-pat { flex: 1; min-width: 0; font-family: "Consolas", "Courier New", monospace; font-size: 0.84rem; color: #1a1a2e; word-break: break-all; }
+    .excl-item.excl-off .excl-pat { color: #aab; text-decoration: line-through; }
+    .excl-del { border: none; background: none; color: #c0392b; font-size: 1.05rem; line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0; opacity: 0.55; }
+    .excl-del:hover { opacity: 1; }
+    .excl-empty { padding: 1.4rem 0.8rem; text-align: center; color: #aab; font-size: 0.78rem; font-style: italic; }
 
     @media (max-width: 900px) {
       .input-section { flex-direction: column; }
@@ -145,6 +193,8 @@
         <span>&#x2194;</span> Compare
       </button>
       <button class="btn-clear" data-action="clear">Clear</button>
+      <button class="btn-settings" id="btnSettings" data-action="settings-open" title="Tune the matching engine">&#9881; Settings</button>
+      <button class="btn-settings" id="btnExclusions" data-action="exclusions-open" title="Exclude files and folders from the comparison">&#128683; Exclusions</button>
     </div>
 
     <div class="dir-panel">
@@ -208,6 +258,117 @@
     </div>
   </div>
 
+  <!-- ENGINE SETTINGS MODAL - starts hidden via inline style, NOT via class -->
+  <div id="settingsModal" style="display:none">
+    <div class="modal-backdrop" data-action="settings-backdrop">
+      <div class="modal-box settings-box">
+        <div class="modal-top">
+          <h3>&#9881; Engine Settings</h3>
+          <button class="modal-x" data-action="settings-close" type="button">&times;</button>
+        </div>
+        <div class="settings-body">
+
+          <div class="setting-row">
+            <div class="setting-head">
+              <span class="setting-name">LLM failure limit</span>
+              <span class="setting-val" id="valFailLimit">3</span>
+            </div>
+            <div class="setting-desc">Consecutive LLM failures (timeouts, unreachable server, garbage answers) before AI arbitration is switched off for the rest of the run.</div>
+            <div class="setting-ctrl">
+              <input type="range" id="rngFailLimit" min="1" max="20" step="1">
+              <input type="number" class="setting-num" id="numFailLimit" min="1" max="20" step="1">
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-head">
+              <span class="setting-name">Max LLM candidates per file</span>
+              <span class="setting-val" id="valMaxLlm">3</span>
+            </div>
+            <div class="setting-desc">Only the top-N most similar candidates for each left file are sent to the LLM. 0 disables AI arbitration entirely.</div>
+            <div class="setting-ctrl">
+              <input type="range" id="rngMaxLlm" min="0" max="20" step="1">
+              <input type="number" class="setting-num" id="numMaxLlm" min="0" max="20" step="1">
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-head">
+              <span class="setting-name">LLM similarity noise floor</span>
+              <span class="setting-val" id="valMinSim">15%</span>
+            </div>
+            <div class="setting-desc">Candidate pairs whose deterministic similarity is below this never reach the LLM &mdash; they are considered noise.</div>
+            <div class="setting-ctrl">
+              <input type="range" id="rngMinSim" min="0" max="100" step="1">
+              <input type="number" class="setting-num" id="numMinSim" min="0" max="100" step="1">
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-head">
+              <span class="setting-name">Renamed-file content threshold</span>
+              <span class="setting-val" id="valContentSim">60%</span>
+            </div>
+            <div class="setting-desc">Files with completely different names are still matched when their content similarity reaches this percentage.</div>
+            <div class="setting-ctrl">
+              <input type="range" id="rngContentSim" min="10" max="100" step="1">
+              <input type="number" class="setting-num" id="numContentSim" min="10" max="100" step="1">
+            </div>
+          </div>
+
+        </div>
+        <div class="settings-bottom">
+          <button class="btn-reset" data-action="settings-reset" type="button">Reset Defaults</button>
+          <span class="spacer"></span>
+          <button class="modal-ok" data-action="settings-accept" type="button">Accept</button>
+          <button class="modal-cancel" data-action="settings-close" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXCLUSIONS MODAL - starts hidden via inline style, NOT via class -->
+  <div id="exclusionsModal" style="display:none">
+    <div class="modal-backdrop" data-action="exclusions-backdrop">
+      <div class="modal-box excl-box">
+        <div class="modal-top">
+          <h3>&#128683; Exclusions</h3>
+          <button class="modal-x" data-action="exclusions-close" type="button">&times;</button>
+        </div>
+        <div class="excl-intro">
+          Matching files and folders are removed from the comparison entirely &mdash; they are never scanned, matched, or shown.
+          Wildcards: <code>*</code> (any text) and <code>?</code> (one character). Plain patterns match the <strong>name</strong> anywhere in the tree
+          (e.g. <code>*.min.js</code>, <code>generated</code>); patterns with <code>/</code> match the <strong>relative path</strong> (e.g. <code>docs/internal</code>, <code>src/*/legacy</code>).
+          Use the switch to disable a pattern without deleting it.
+        </div>
+        <div class="excl-columns">
+          <div class="excl-col">
+            <div class="excl-col-head">&#128196; Exclude Files</div>
+            <div class="excl-addrow">
+              <input type="text" id="exclFileInput" placeholder="e.g. *.min.js, Test*.java" spellcheck="false">
+              <button type="button" data-action="excl-add-files">+ Add</button>
+            </div>
+            <div class="excl-list" id="exclFileList"></div>
+          </div>
+          <div class="excl-col">
+            <div class="excl-col-head">&#128193; Exclude Folders</div>
+            <div class="excl-addrow">
+              <input type="text" id="exclDirInput" placeholder="e.g. generated, docs/internal" spellcheck="false">
+              <button type="button" data-action="excl-add-dirs">+ Add</button>
+            </div>
+            <div class="excl-list" id="exclDirList"></div>
+          </div>
+        </div>
+        <div class="settings-bottom">
+          <button class="btn-reset" data-action="exclusions-clear" type="button">Clear All</button>
+          <span class="spacer"></span>
+          <button class="modal-ok" data-action="exclusions-accept" type="button">Accept</button>
+          <button class="modal-cancel" data-action="exclusions-close" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
   // ==============================================================
   // ALL JS INLINE - ZERO EXTERNAL FILES
@@ -219,8 +380,21 @@
     browseCurrent: "",
     browseParent: "",
     lastData: null,       // last comparison response (original order)
-    matchSorted: false    // toggle: false = original, true = sorted by status
+    matchSorted: false,   // toggle: false = original, true = sorted by status
+    comparing: false,     // true while a comparison request is in flight
+    settings: {},         // engine settings sent with each compare request
+    exclusions: { files: [], dirs: [] },  // [{pat, on}] committed patterns
+    exclDraft: null       // working copy while the Exclusions dialog is open
   };
+
+  // ---- Engine settings definition (must mirror SETTING_BOUNDS in
+  //      comparator/services/correspondence.py) ----
+  var SETTINGS_DEF = [
+    { key: "llm_failure_limit",     rng: "rngFailLimit",  num: "numFailLimit",  val: "valFailLimit",  min: 1,  max: 20,  def: 3,  unit: ""  },
+    { key: "max_llm_per_file",      rng: "rngMaxLlm",     num: "numMaxLlm",     val: "valMaxLlm",     min: 0,  max: 20,  def: 3,  unit: ""  },
+    { key: "llm_min_sim",           rng: "rngMinSim",     num: "numMinSim",     val: "valMinSim",     min: 0,  max: 100, def: 15, unit: "%" },
+    { key: "content_sim_threshold", rng: "rngContentSim", num: "numContentSim", val: "valContentSim", min: 10, max: 100, def: 60, unit: "%" }
+  ];
 
   // ---- Utility ----
   function esc(s) {
@@ -234,9 +408,9 @@
             .replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function toast(msg) {
+  function toast(msg, ok) {
     var el = document.createElement("div");
-    el.className = "error-toast";
+    el.className = ok ? "error-toast toast-ok" : "error-toast";
     el.textContent = msg;
     document.body.appendChild(el);
     setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 6000);
@@ -315,6 +489,24 @@
         break;
       case "compare":        runComparison(); break;
       case "clear":          clearAll(); break;
+      case "settings-open":  openSettings(); break;
+      case "settings-close": closeSettings(); break;
+      case "settings-reset": resetSettingsDialog(); break;
+      case "settings-accept": acceptSettings(); break;
+      case "settings-backdrop":
+        if (evt && evt.target === el) closeSettings();
+        break;
+      case "exclusions-open":   openExclusions(); break;
+      case "exclusions-close":  closeExclusions(); break;
+      case "exclusions-clear":  clearExclusionsDraft(); break;
+      case "exclusions-accept": acceptExclusions(); break;
+      case "exclusions-backdrop":
+        if (evt && evt.target === el) closeExclusions();
+        break;
+      case "excl-add-files":    exclAdd("files"); break;
+      case "excl-add-dirs":     exclAdd("dirs"); break;
+      case "excl-toggle":       exclToggle(el.getAttribute("data-side"), parseInt(el.getAttribute("data-idx"), 10)); break;
+      case "excl-remove":       exclRemove(el.getAttribute("data-side"), parseInt(el.getAttribute("data-idx"), 10)); break;
     }
   }
 
@@ -326,7 +518,7 @@
 
   // ---- Escape key ----
   document.addEventListener("keydown", function(e) {
-    if (e.key === "Escape") closeBrowse();
+    if (e.key === "Escape") { closeBrowse(); closeSettings(); closeExclusions(); }
   });
 
   // ---- Drag & drop ----
@@ -416,6 +608,191 @@
   }
 
   // ==============================================================
+  // ENGINE SETTINGS DIALOG
+  // ==============================================================
+  function clampSetting(d, v) {
+    v = Math.round(v);
+    if (isNaN(v)) v = d.def;
+    return Math.max(d.min, Math.min(d.max, v));
+  }
+
+  function loadSettings() {
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem("wcEngineSettings") || "{}"); } catch (e) { saved = {}; }
+    for (var i = 0; i < SETTINGS_DEF.length; i++) {
+      var d = SETTINGS_DEF[i];
+      var v = (saved[d.key] !== undefined) ? parseFloat(saved[d.key]) : d.def;
+      APP.settings[d.key] = clampSetting(d, v);
+    }
+  }
+
+  function syncSettingRow(d, v) {
+    v = clampSetting(d, v);
+    document.getElementById(d.rng).value = v;
+    document.getElementById(d.num).value = v;
+    document.getElementById(d.val).textContent = v + d.unit;
+    return v;
+  }
+
+  function openSettings() {
+    if (APP.comparing) return;  // locked while a comparison is running
+    for (var i = 0; i < SETTINGS_DEF.length; i++) {
+      syncSettingRow(SETTINGS_DEF[i], APP.settings[SETTINGS_DEF[i].key]);
+    }
+    document.getElementById("settingsModal").style.display = "block";
+  }
+
+  function closeSettings() {
+    document.getElementById("settingsModal").style.display = "none";
+  }
+
+  function resetSettingsDialog() {
+    for (var i = 0; i < SETTINGS_DEF.length; i++) {
+      syncSettingRow(SETTINGS_DEF[i], SETTINGS_DEF[i].def);
+    }
+  }
+
+  function acceptSettings() {
+    for (var i = 0; i < SETTINGS_DEF.length; i++) {
+      var d = SETTINGS_DEF[i];
+      APP.settings[d.key] = clampSetting(d, parseFloat(document.getElementById(d.num).value));
+    }
+    try { localStorage.setItem("wcEngineSettings", JSON.stringify(APP.settings)); } catch (e) {}
+    closeSettings();
+    toast("Engine settings applied — they will be used on the next comparison.", true);
+  }
+
+  // Keep slider, number box and value pill in sync while editing
+  SETTINGS_DEF.forEach(function(d) {
+    document.getElementById(d.rng).addEventListener("input", function() {
+      syncSettingRow(d, parseFloat(this.value));
+    });
+    document.getElementById(d.num).addEventListener("change", function() {
+      syncSettingRow(d, parseFloat(this.value));
+    });
+  });
+
+  loadSettings();
+
+  // ==============================================================
+  // EXCLUSIONS DIALOG (BeyondCompare-style name filters)
+  // ==============================================================
+  function loadExclusions() {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem("wcExclusions") || "null"); } catch (e) { saved = null; }
+    APP.exclusions = { files: [], dirs: [] };
+    if (saved) {
+      ["files", "dirs"].forEach(function(side) {
+        (saved[side] || []).forEach(function(item) {
+          if (item && typeof item.pat === "string" && item.pat.trim()) {
+            APP.exclusions[side].push({ pat: item.pat.trim(), on: item.on !== false });
+          }
+        });
+      });
+    }
+  }
+
+  function activeExclusions() {
+    // Only enabled patterns are sent to the backend
+    return {
+      files: APP.exclusions.files.filter(function(i) { return i.on; }).map(function(i) { return i.pat; }),
+      dirs:  APP.exclusions.dirs.filter(function(i) { return i.on; }).map(function(i) { return i.pat; })
+    };
+  }
+
+  function renderExclLists() {
+    ["files", "dirs"].forEach(function(side) {
+      var listEl = document.getElementById(side === "files" ? "exclFileList" : "exclDirList");
+      var items = APP.exclDraft[side];
+      if (!items.length) {
+        listEl.innerHTML = '<div class="excl-empty">No patterns — nothing is excluded.</div>';
+        return;
+      }
+      var html = "";
+      for (var i = 0; i < items.length; i++) {
+        html += '<div class="excl-item' + (items[i].on ? '' : ' excl-off') + '">' +
+          '<span class="excl-switch" data-action="excl-toggle" data-side="' + side + '" data-idx="' + i + '" title="Enable / disable"></span>' +
+          '<span class="excl-pat">' + esc(items[i].pat) + '</span>' +
+          '<button class="excl-del" type="button" data-action="excl-remove" data-side="' + side + '" data-idx="' + i + '" title="Remove">&times;</button>' +
+          '</div>';
+      }
+      listEl.innerHTML = html;
+    });
+  }
+
+  function openExclusions() {
+    if (APP.comparing) return;  // locked while a comparison is running
+    APP.exclDraft = JSON.parse(JSON.stringify(APP.exclusions));
+    document.getElementById("exclFileInput").value = "";
+    document.getElementById("exclDirInput").value = "";
+    renderExclLists();
+    document.getElementById("exclusionsModal").style.display = "block";
+  }
+
+  function closeExclusions() {
+    document.getElementById("exclusionsModal").style.display = "none";
+    APP.exclDraft = null;
+  }
+
+  function exclAdd(side) {
+    if (!APP.exclDraft) return;
+    var input = document.getElementById(side === "files" ? "exclFileInput" : "exclDirInput");
+    var parts = input.value.split(/[,;]/);
+    var added = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var pat = parts[i].trim();
+      if (!pat) continue;
+      var dup = APP.exclDraft[side].some(function(item) { return item.pat.toLowerCase() === pat.toLowerCase(); });
+      if (!dup) { APP.exclDraft[side].push({ pat: pat, on: true }); added++; }
+    }
+    input.value = "";
+    input.focus();
+    if (added) renderExclLists();
+  }
+
+  function exclToggle(side, idx) {
+    if (!APP.exclDraft || !APP.exclDraft[side] || !APP.exclDraft[side][idx]) return;
+    APP.exclDraft[side][idx].on = !APP.exclDraft[side][idx].on;
+    renderExclLists();
+  }
+
+  function exclRemove(side, idx) {
+    if (!APP.exclDraft || !APP.exclDraft[side]) return;
+    APP.exclDraft[side].splice(idx, 1);
+    renderExclLists();
+  }
+
+  function clearExclusionsDraft() {
+    if (!APP.exclDraft) return;
+    APP.exclDraft = { files: [], dirs: [] };
+    renderExclLists();
+  }
+
+  function acceptExclusions() {
+    if (!APP.exclDraft) return;
+    // Adopt anything still typed into the inputs but not yet added
+    exclAdd("files");
+    exclAdd("dirs");
+    APP.exclusions = APP.exclDraft;
+    APP.exclDraft = null;
+    try { localStorage.setItem("wcExclusions", JSON.stringify(APP.exclusions)); } catch (e) {}
+    document.getElementById("exclusionsModal").style.display = "none";
+    var act = activeExclusions();
+    toast("Exclusions applied — " + act.files.length + " file pattern(s), " +
+          act.dirs.length + " folder pattern(s) active for the next comparison.", true);
+  }
+
+  // Enter in a pattern input adds it
+  document.getElementById("exclFileInput").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); exclAdd("files"); }
+  });
+  document.getElementById("exclDirInput").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); exclAdd("dirs"); }
+  });
+
+  loadExclusions();
+
+  // ==============================================================
   // COMPARISON
   // ==============================================================
   function clearAll() {
@@ -434,8 +811,13 @@
   function runComparison() {
     var left = document.getElementById("leftDir").value.trim();
     var right = document.getElementById("rightDir").value.trim();
-    if (!left || !right) return;
+    if (!left || !right || APP.comparing) return;
 
+    APP.comparing = true;
+    closeSettings();     // settings and exclusions are locked while the engine runs
+    closeExclusions();
+    document.getElementById("btnSettings").disabled = true;
+    document.getElementById("btnExclusions").disabled = true;
     document.getElementById("loadingOverlay").classList.remove("hidden");
     document.getElementById("btnCompare").disabled = true;
     document.getElementById("comparisonBody").innerHTML = "";
@@ -446,18 +828,24 @@
     fetch("/api/compare/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ left_dir: left, right_dir: right })
+      body: JSON.stringify({ left_dir: left, right_dir: right, settings: APP.settings, exclusions: activeExclusions() })
     })
     .then(function(r) {
       if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || "Error"); });
       return r.json();
     })
     .then(function(data) {
+      APP.comparing = false;
+      document.getElementById("btnSettings").disabled = false;
+      document.getElementById("btnExclusions").disabled = false;
       document.getElementById("loadingOverlay").classList.add("hidden");
       updateBtn();
       renderResults(data);
     })
     .catch(function(err) {
+      APP.comparing = false;
+      document.getElementById("btnSettings").disabled = false;
+      document.getElementById("btnExclusions").disabled = false;
       document.getElementById("loadingOverlay").classList.add("hidden");
       updateBtn();
       toast(err.message || "Comparison failed");
@@ -495,7 +883,8 @@
         if (cs === "identical") { sym = "=="; symClass = "status-identical"; }
         else if (cs === "minor") { sym = "~="; symClass = "status-minor"; }
         else { sym = "!="; symClass = "status-different"; }
-        var methodLabel = m.match_type === "llm_verified" ? '<span class="match-method">AI-Matched</span>' : '';
+        var methodLabel = m.match_type === "llm_verified" ? '<span class="match-method">AI-Matched</span>' :
+                          m.match_type === "content" ? '<span class="match-method">Renamed</span>' : '';
         html += '<tr class="row-matched" title="Double-click to compare files" data-left-path="' + escAttr(m.left.full_path) + '" data-right-path="' + escAttr(m.right.full_path) + '">' +
           '<td class="cell-left">' + esc(m.left.name) + '</td>' +
           '<td class="cell-left">' + esc(m.left.directory || ".") + '</td>' +
