@@ -1,0 +1,16 @@
+{
+    // Guard against "ghost file" state in VS Code-family IDEs (incl. Antigravity).
+    // 2026-07-03: the markdown preview + outline kept showing a deleted old
+    // README restored from the IDE's hot-exit backups. These settings make the
+    // editor always trust the file on DISK for this workspace.
+
+    // Don't keep/restore unsaved buffer backups across sessions (the ghost source).
+    "files.hotExit": "off",
+
+    // Don't resurrect undo history for files changed outside the editor.
+    "files.restoreUndoStack": false,
+
+    // Re-read files from disk automatically when they change externally
+    // and the buffer has no unsaved edits.
+    "files.autoSave": "onFocusChange"
+}
