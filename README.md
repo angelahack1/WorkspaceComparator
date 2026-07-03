@@ -9,7 +9,7 @@ workspaces — surviving renames, moves and whole build-system migrations — wi
 Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 
 <p align="center">
-  <img src="https://img.shields.io/badge/VERSION-V1.0.0-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.0.0">
+  <img src="https://img.shields.io/badge/VERSION-V1.2.0-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.2.0">
   <img src="https://img.shields.io/badge/PYTHON-3.12.10-3e6e9e?style=for-the-badge&labelColor=2b2d31&logo=python&logoColor=white" alt="Python 3.12.10">
   <img src="https://img.shields.io/badge/DJANGO-5.2.15-43a047?style=for-the-badge&labelColor=2b2d31&logo=django&logoColor=white" alt="Django 5.2.15">
   <img src="https://img.shields.io/badge/PLATFORM-WIN%2010%20%7C%2011-3e78c2?style=for-the-badge&labelColor=2b2d31&logo=windows&logoColor=white" alt="Platform Windows 10 | 11">

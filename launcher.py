@@ -25,6 +25,8 @@ import threading
 import time
 import webbrowser
 
+from workspace_comparator import __version__
+
 HOST = '127.0.0.1'
 DEFAULT_PORT = 9000
 BROWSER_DELAY_SECONDS = 5      # extra wait AFTER the server is confirmed up
@@ -60,7 +62,7 @@ def main() -> int:
                   or os.environ.get('WSC_NO_BROWSER') == '1')
 
     print('=' * 60)
-    print('  Workspace Comparator - standalone server')
+    print(f'  Workspace Comparator v{__version__} - standalone server')
     print('=' * 60)
 
     if _port_in_use(port):

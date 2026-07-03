@@ -6,6 +6,8 @@ Guidance for Claude Code (and humans) working in this repository. Read this befo
 
 ## 1. What this project is
 
+**Current version: 1.2.0** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles and the `index.html` header carry the same number by hand (see §10 "Bump the app version").
+
 **Workspace Comparator** is a **local, single-user Django web tool** that compares two source-code project directories ("left" and "right") and works out which files *correspond* to each other — even when the projects have been restructured, renamed, or migrated between build systems (e.g. a plain Java workspace vs. its Maven-ified successor).
 
 It is designed for **codebase archaeology / migration verification**: "we refactored/migrated project A into project B — which files are the same, which changed, and which have no counterpart?"
@@ -319,3 +321,4 @@ Read this list before you're surprised by something.
 | Change the diff-viewer UI | `templates/comparator/file_compare.html` (inline CSS+JS) |
 | Add/modify an API route | `comparator/urls.py` + `comparator/views.py` |
 | Change server config | `workspace_comparator/settings.py` |
+| Bump the app version | `workspace_comparator/__init__.py` → `__version__` (feeds `launcher.py` banner + `build.py`), plus by hand: README badge, `<title>`/`<h1>` in `index.html`, `<title>` in `file_compare.html`, and the version line in §1 of this file |

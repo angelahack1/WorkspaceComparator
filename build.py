@@ -37,6 +37,8 @@ import time
 import urllib.error
 import urllib.request
 
+from workspace_comparator import __version__ as APP_VERSION
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 APP_NAME = 'WorkSpaceComparator'
 ENTRY_SCRIPT = os.path.join(ROOT, 'launcher.py')
@@ -205,6 +207,7 @@ def main() -> int:
     no_verify = '--no-verify' in sys.argv[1:]
 
     py = sys.executable
+    print(f'Building {APP_NAME} v{APP_VERSION}')
     print(f'Using Python interpreter: {py}')
 
     if skip_deps:
@@ -264,6 +267,7 @@ def main() -> int:
     print('  BUILD SUCCESSFUL')
     print('=' * 70)
     print(f'  Executable : {exe_path}')
+    print(f'  Version    : {APP_VERSION}')
     print(f'  Size       : {size_mb:.1f} MB')
     print()
     print('  Copy this single file to any Windows machine and run it.')
