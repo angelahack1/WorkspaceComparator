@@ -1,3 +1,11 @@
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║        ✦ ✦ ✦   W O R K S P A C E   C O M P A R A T O R   ✦ ✦ ✦         ║
+# ╠════════════════════════════════════════════════════════════════════════╣
+# ║ Module  : comparator/services/file_diff.py                             ║
+# ║ Author  : Ángela López Mendoza                                         ║
+# ║ E-mail  : angela@xaiht.org                                             ║
+# ║ © 2026 Ángela López Mendoza — All rights reserved.                     ║
+# ╚════════════════════════════════════════════════════════════════════════╝
 """
 File Diff Service
 -----------------

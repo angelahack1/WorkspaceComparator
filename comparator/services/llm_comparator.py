@@ -1,3 +1,11 @@
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║        ✦ ✦ ✦   W O R K S P A C E   C O M P A R A T O R   ✦ ✦ ✦         ║
+# ╠════════════════════════════════════════════════════════════════════════╣
+# ║ Module  : comparator/services/llm_comparator.py                        ║
+# ║ Author  : Ángela López Mendoza                                         ║
+# ║ E-mail  : angela@xaiht.org                                             ║
+# ║ © 2026 Ángela López Mendoza — All rights reserved.                     ║
+# ╚════════════════════════════════════════════════════════════════════════╝
 """
 LLM Comparator Module (Ollama)
 -------------------------------

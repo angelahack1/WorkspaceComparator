@@ -1,161 +1,91 @@
-# Workspace Comparator — Standalone Executable
+<div align="center">
 
-Workspace Comparator is a local Django web tool that compares two source-code
-project directories and works out which files correspond to each other, with a
-Beyond Compare-style side-by-side diff viewer.
+# 🔍 Workspace Comparator
 
-This document explains how to generate **`WorkSpaceComparator.exe`** — a single,
-fully self-contained Windows executable that runs on **any Windows machine,
-even without Python installed**.
+### *"We migrated project A into project B… which files are actually the same?"*
 
----
+A local, zero-cloud web tool that finds the **file correspondences** between two source-code
+workspaces — surviving renames, moves and whole build-system migrations — with a
+Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 
-## 1. What you get
+<p align="center">
+  <img src="https://img.shields.io/badge/VERSION-V1.0.0-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.0.0">
+  <img src="https://img.shields.io/badge/PYTHON-3.12.10-3e6e9e?style=for-the-badge&labelColor=2b2d31&logo=python&logoColor=white" alt="Python 3.12.10">
+  <img src="https://img.shields.io/badge/DJANGO-5.2.15-43a047?style=for-the-badge&labelColor=2b2d31&logo=django&logoColor=white" alt="Django 5.2.15">
+  <img src="https://img.shields.io/badge/PLATFORM-WIN%2010%20%7C%2011-3e78c2?style=for-the-badge&labelColor=2b2d31&logo=windows&logoColor=white" alt="Platform Windows 10 | 11">
+</p>
+<p align="center">
+  <img src="https://img.shields.io/badge/PYINSTALLER-6.18.0-9c27e0?style=for-the-badge&labelColor=2b2d31" alt="PyInstaller 6.18.0">
+  <img src="https://img.shields.io/badge/AI%20ENGINE-OLLAMA%20%C2%B7%20GLM--5.2-43a047?style=for-the-badge&labelColor=2b2d31" alt="AI engine: Ollama · glm-5.2:cloud (optional)">
+  <img src="https://img.shields.io/badge/LICENSE-MIT-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="License MIT">
+</p>
 
-- **One single file**: `dist/WorkSpaceComparator.exe` (~30–50 MB).
-- It embeds the Python interpreter, Django, the application code and all the
-  HTML/CSS/JS of the UI. Nothing else is needed at runtime.
-- On double-click it:
-  1. Starts the web server on **http://127.0.0.1:9000/** (not 8000).
-  2. Waits until the server is completely loaded and accepting connections.
-  3. **5 seconds later**, opens your default browser on the application.
-- Closing the console window (or pressing `Ctrl+C` in it) stops the server.
+<img src="docs/screenshots/02-results.png" width="100%" alt="Comparison results: matched files joined in green with ==/~=/!= pills, AI-Matched and Renamed labels, unmatched files in red">
 
----
+</div>
 
-## 2. Prerequisites (only for BUILDING the exe)
+## ✨ What you get
 
-The *target* machine needs nothing. The machine where you **build** needs:
+- 🧩 **4-phase matching engine** — exact path → same name → fuzzy name → pure content. It catches files that were **renamed** (`StringHelper.java` → `TextUtils.java`) or **moved** (`src/` → `src/main/java/`).
+- 🏷️ **Honest pills** on every match: `==` identical · `~=` only comments/whitespace changed · `!=` really different.
+- 🤖 **AI-arbitrated matches** *(optional)* — ambiguous pairs go to a **local** Ollama model. No Ollama running? The tool simply falls back to pure heuristics. Nothing ever leaves your machine.
+- ⚙️ **Settings** & 🚫 **Exclusions** dialogs to tune the engine and skip noise, right from the UI.
 
-| Requirement | Notes |
-|---|---|
-| Windows 10/11 | PyInstaller builds for the OS it runs on — build on Windows to get a Windows exe. |
-| Python 3.10+ (3.12 recommended) | Check with `python --version`. |
-| Internet access | `build.py` downloads packages with `pip` on first run. |
+## 🚀 Get it — the easy way
 
-You do **not** need to pre-install Django, requests or PyInstaller —
-`build.py` installs everything automatically.
+Go to **[Releases](../../releases)** → download **`WorkSpaceComparator.exe`** → double-click. Done. 💅
 
----
+No Python, no pip, no installer — one self-contained file. It starts a private server and
+opens your browser at `http://127.0.0.1:9000/` all by itself. Close the console window when
+you're finished.
 
-## 3. How to generate the exe (step by step)
+## 🖱️ How to use it
 
-Open a terminal (PowerShell or CMD) **in the repository root**
-(the folder containing `manage.py` and `build.py`) and run:
+**1.** Pick your two folders (type the paths or browse 📁) and hit **Compare**.
+**2.** Read the verdict: green joined rows are correspondences, red rows have no counterpart.
+**3.** **Double-click any row** to open the side-by-side diff viewer:
 
-```powershell
-python build.py
-```
+<div align="center">
+<img src="docs/screenshots/04-diff-viewer.png" width="100%" alt="Beyond Compare-style diff viewer: content-aligned rows, word-level change highlights, hatched gaps, minimap and context folding">
+</div>
 
-That is all. The script performs four steps, printing a banner for each:
+Corresponding lines **face each other** even when line numbers drift, changed **words** are
+highlighted inside the line, unchanged runs fold away, and the minimap gives you the whole
+file at a glance. Tune the engine anytime with the ⚙ Settings dialog:
 
-1. **`pip install -r requirements.txt`** — installs the runtime dependencies
-   (`django`, `requests`). This is done so that anyone can clone the repo on a
-   clean machine and build the exe without any manual setup.
-2. **`pip install pyinstaller`** — installs (or updates) PyInstaller.
-3. **Cleanup** — deletes any previous `build/`, `dist/` and `.spec` output so
-   every build is reproducible from scratch.
-4. **PyInstaller** — runs the actual build (takes a few minutes):
+<div align="center">
+<img src="docs/screenshots/03-settings.png" width="70%" alt="Engine Settings dialog with the four tunable matching thresholds">
+</div>
 
-   ```
-   python -m PyInstaller --onefile --name WorkSpaceComparator
-       --paths <repo root>
-       --add-data comparator/templates;comparator/templates
-       --collect-submodules django
-       --hidden-import <project + django modules loaded by string>
-       launcher.py
-   ```
+> 🧪 **Try it right now** — the repo ships a tiny demo migration: compare
+> `demo/InvoicerClassic` against `demo/InvoicerMaven` and watch every match type appear.
 
-When it finishes you will see:
-
-```
-======================================================================
-  BUILD SUCCESSFUL
-======================================================================
-  Executable : D:\...\WorkspaceComparator\dist\WorkSpaceComparator.exe
-```
-
-### Why those PyInstaller options?
-
-- `--onefile` — packs everything into **one** exe instead of a folder.
-- `--add-data comparator/templates;...` — the entire UI lives in two
-  self-contained HTML templates (`index.html`, `file_compare.html`); they are
-  data files, not Python code, so they must be bundled explicitly.
-- `--collect-submodules django` + the `--hidden-import` list — Django loads
-  many modules from **strings** in `settings.py` (`INSTALLED_APPS`,
-  `MIDDLEWARE`, `ROOT_URLCONF`, template backends…). PyInstaller's static
-  analysis cannot see string imports, so they are declared explicitly.
-- `launcher.py` — the entry point. It replaces `manage.py runserver`: it boots
-  Django programmatically, serves on port **9000**, and opens the browser
-  5 seconds after the server is confirmed up.
-
----
-
-## 4. Using the executable
-
-1. Copy `dist\WorkSpaceComparator.exe` to the target machine (USB stick,
-   network share, whatever). **No Python, no pip, no installation required.**
-2. Double-click it. A console window opens showing the server log:
-
-   ```
-   ============================================================
-     Workspace Comparator - standalone server
-   ============================================================
-   Starting server at http://127.0.0.1:9000/
-   Keep this window open while using the application.
-   Server is up. Opening browser in 5 seconds...
-   ```
-
-3. Your default browser opens automatically at **http://127.0.0.1:9000/**.
-4. Keep the console window open while you work. Close it (or `Ctrl+C`) to
-   stop the server.
-
-### Optional switches
-
-| How | Effect |
-|---|---|
-| `WorkSpaceComparator.exe --no-browser` | Start the server without opening a browser. |
-| `set WSC_PORT=9500` before running | Serve on a different port than 9000. |
-| `set WSC_NO_BROWSER=1` before running | Same as `--no-browser`. |
-
-### AI-assisted matching (optional)
-
-The comparison engine optionally uses a local **Ollama** LLM
-(`http://127.0.0.1:11434`, model `glm-5.2:cloud`) to arbitrate ambiguous file
-matches. This is **not** bundled in the exe. If Ollama is not running on the
-target machine, the app degrades gracefully to deterministic matching —
-everything still works, you just get `llm_matches = 0`.
-
----
-
-## 5. Troubleshooting
-
-| Symptom | Cause / fix |
-|---|---|
-| Windows SmartScreen: "Windows protected your PC" | Normal for unsigned exes. Click *More info → Run anyway* (or sign the binary). |
-| Antivirus quarantines the exe | Some AVs are suspicious of PyInstaller one-file binaries. Add an exclusion, or build with `--onedir` instead. |
-| First start takes several seconds | Expected: a one-file exe unpacks itself to a temp folder on each launch. |
-| `ERROR: port 9000 is already in use` | Another program (or a second copy of this exe) is on 9000. Close it or use `set WSC_PORT=...`. |
-| Browser doesn't open | Open http://127.0.0.1:9000/ manually; use `--no-browser` machines without a default browser. |
-| `TemplateDoesNotExist` at runtime | The templates weren't bundled — always build via `python build.py` (it passes the required `--add-data`). |
-| Build fails in step 1/2 | pip/network issue — check internet access and proxy settings, then rerun `python build.py`. |
-
----
-
-## 6. Security note
-
-This tool is a **localhost, single-user developer utility**: it binds to
-`127.0.0.1` only, but it has no authentication and can read any file the user
-can. Never expose it to a network.
-
----
-
-## 7. Development (without the exe)
+## 🛠️ Run from source
 
 ```powershell
 pip install -r requirements.txt
-python manage.py runserver          # dev server on http://127.0.0.1:8000
+python manage.py runserver        # → http://127.0.0.1:8000
 ```
 
-The exe is just a frozen wrapper around the same code — see `launcher.py`
-(runtime entry point) and `build.py` (build pipeline).
+Optional AI referee: `ollama serve` with the `glm-5.2:cloud` model pulled.
+
+## 📦 Build the release exe
+
+```powershell
+python build.py                   # full build → dist/WorkSpaceComparator.exe
+python build.py --skip-deps       # faster rebuild
+```
+
+The script runs PyInstaller in one-file mode, then **smoke-tests the exe** — boots it and
+verifies the embedded UI is current — before declaring victory. 🏁 Upload the result to a
+GitHub Release and your users are one double-click away.
+
+---
+
+<div align="center">
+
+Made with 💜 by **Ángela López Mendoza** · 📧 [angela@xaiht.org](mailto:angela@xaiht.org)
+
+*MIT licensed — compare boldly, migrate fearlessly.*
+
+</div>

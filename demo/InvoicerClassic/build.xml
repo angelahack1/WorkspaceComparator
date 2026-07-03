@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="invoicer" default="jar" basedir=".">
+    <target name="compile">
+        <javac srcdir="src" destdir="out"/>
+    </target>
+    <target name="jar" depends="compile">
+        <jar destfile="invoicer.jar" basedir="out"/>
+    </target>
+</project>
