@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>File Compare</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: "Segoe UI Variable", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; background: #eef1f5; color: #1a1a2e; }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+    .hidden { display: none !important; }
+
+    /* ================= Toolbar ================= */
+    .fc-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: linear-gradient(180deg, #232f3e 0%, #1a2332 100%); border-bottom: 1px solid #101720; flex-shrink: 0; box-shadow: 0 1px 6px rgba(0,0,0,0.25); }
+    .fc-group { display: flex; gap: 1px; background: #101720; border-radius: 6px; padding: 2px; }
+    .fc-btn { padding: 5px 14px; border: none; background: transparent; color: #aebbc9; border-radius: 5px; cursor: pointer; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.3px; transition: background 0.15s, color 0.15s; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .fc-btn:hover { background: #33445a; color: #fff; }
+    .fc-btn-active { background: #4361ee; color: #fff; box-shadow: 0 1px 4px rgba(67,97,238,0.5); }
+    .fc-btn-active:hover { background: #3a56d4; }
+    .fc-btn-icon { font-size: 0.95rem; line-height: 1; }
+    .fc-btn.fc-on { background: #e67e22; color: #fff; }
+    .fc-btn.fc-on:hover { background: #cf6d17; }
+    .fc-btn.fc-btn-disabled { opacity: 0.3; cursor: default !important; pointer-events: none; }
+    .fc-sep { width: 1px; height: 22px; background: #3a4a5e; margin: 0 4px; }
+    .fc-title { color: #7c8ea3; font-size: 0.74rem; margin-left: auto; letter-spacing: 0.5px; text-transform: uppercase; }
+
+    /* ================= File info bars ================= */
+    .fc-file-bars { display: flex; flex-shrink: 0; }
+    .fc-file-bar { flex: 1; display: flex; align-items: baseline; gap: 8px; padding: 6px 12px; background: linear-gradient(180deg, #fdfdfe, #f0f3f7); border-bottom: 1px solid #d7dde5; overflow: hidden; white-space: nowrap; min-width: 0; }
+    .fc-file-bar-left { border-right: 1px solid #c3ccd6; }
+    .fb-name { font-weight: 700; font-size: 0.88rem; color: #1b3a5c; flex-shrink: 0; }
+    .fb-dir { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 0.72rem; color: #8a94a1; overflow: hidden; text-overflow: ellipsis; min-width: 0; direction: rtl; text-align: left; }
+    .fb-meta { margin-left: auto; font-size: 0.72rem; color: #6b7683; flex-shrink: 0; padding-left: 10px; }
+    .fc-file-bar-empty { background: #e2e5ea !important; color: #9aa; }
+
+    /* ================= Main area: minimap + panels ================= */
+    .fc-main { display: flex; flex: 1; overflow: hidden; position: relative; }
+    .fc-minimap { width: 18px; flex-shrink: 0; background: #dde2e9; border-right: 1px solid #c3ccd6; position: relative; cursor: pointer; }
+    .fc-minimap canvas { position: absolute; top: 0; left: 0; }
+    .fc-panels { display: flex; flex: 1; overflow: hidden; }
+    .fc-panel { flex: 1; overflow: auto; font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 12.5px; line-height: 20px; background: #fff; min-width: 0; }
+    .fc-panel-left { border-right: 2px solid #34495e; }
+
+    /* ================= Diff lines ================= */
+    .fcl { display: flex; min-height: 20px; white-space: pre; }
+    .fcl .g { width: 62px; min-width: 62px; text-align: right; padding: 0 8px 0 0; color: #9aa4b0; background: #f7f8fa; border-right: 1px solid #e6e8ec; border-left: 3px solid transparent; user-select: none; -webkit-user-select: none; flex-shrink: 0; font-size: 11px; }
+    .fcl .c { flex: 1; padding: 0 10px; min-width: 0; }
+
+    /* equal */
+    .t-eq .c { background: #fff; }
+
+    /* modified pair (amber) + intra-line word highlight */
+    .t-mod .c { background: #fff6e0; }
+    .t-mod .g { background: #f6ead0; color: #8a6d1f; border-left-color: #e6a817; }
+    .t-mod .ch { background: #ffd28c; border-radius: 2px; box-shadow: 0 0 0 1px #ffd28c; }
+
+    /* minor / whitespace-only (soft blue) */
+    .t-min .c { background: #edf4fd; }
+    .t-min .g { background: #dbe8f9; color: #3d6ca8; border-left-color: #6b9ae8; }
+
+    /* left-only (red) */
+    .t-del .c { background: #fdeaea; }
+    .t-del .g { background: #f6d5d5; color: #a33; border-left-color: #e05555; }
+
+    /* right-only (green) */
+    .t-add .c { background: #e9f6ec; }
+    .t-add .g { background: #d4ecd9; color: #2a7a42; border-left-color: #3fae5c; }
+
+    /* alignment gap: BC-style diagonal hatching */
+    .t-gap .c, .t-gap .g { background: repeating-linear-gradient(-45deg, #f1f2f4 0 5px, #e4e7eb 5px 10px); }
+    .t-gap .g { border-left-color: transparent; border-right-color: #dde0e5; }
+
+    /* unmatched single-file view */
+    .t-unm .c { background: #fdeaea; }
+    .t-unm .g { background: #f6d5d5; color: #a33; border-left-color: #e05555; }
+    .fc-panel-empty-side { background: repeating-linear-gradient(-45deg, #eceef1 0 6px, #e0e3e8 6px 12px); }
+
+    /* collapsed-context separator */
+    .t-sep { cursor: pointer; }
+    .t-sep .g { background: #eef1f5; color: #98a3b0; border-left-color: transparent; }
+    .t-sep .c { background: #f2f4f8; color: #8b95a3; font-family: "Segoe UI", Tahoma, sans-serif; font-size: 11px; font-style: italic; text-align: center; border-top: 1px dashed #c8cfd8; border-bottom: 1px dashed #c8cfd8; }
+    .t-sep:hover .c { background: #e8edf5; color: #4361ee; }
+
+    /* section flash on navigate */
+    @keyframes fcFlash { 0% { outline-offset: -2px; outline: 2px solid #4361ee; } 100% { outline: 2px solid transparent; } }
+    .flash { animation: fcFlash 1s ease-out; }
+
+    /* ================= Syntax colors ================= */
+    .sk { color: #0b3ea8; font-weight: 600; }   /* keyword  */
+    .ss { color: #b25900; }                     /* string   */
+    .sc { color: #4c9a4c; font-style: italic; } /* comment  */
+    .sn { color: #1d7a8c; }                     /* number   */
+
+    /* ================= Status bar ================= */
+    .fc-status { display: flex; align-items: center; gap: 14px; padding: 4px 14px; background: linear-gradient(180deg, #f6f7f9, #eceff3); border-top: 1px solid #d7dde5; font-size: 0.75rem; color: #556; flex-shrink: 0; min-height: 28px; }
+    .fc-chip { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+    .fc-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+    .fc-dot-mod { background: #f0a832; } .fc-dot-add { background: #3fae5c; }
+    .fc-dot-del { background: #e05555; } .fc-dot-min { background: #6b9ae8; }
+    .fc-identical { color: #27ae60; font-weight: 700; }
+    .fc-sec-ind { margin-left: auto; color: #7a8592; }
+    .fc-keys { color: #aab3bd; font-size: 0.68rem; }
+
+    /* ================= Loading / error ================= */
+    .fc-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.92); z-index: 100; gap: 1rem; }
+    .fc-loading p { font-size: 0.95rem; color: #555; }
+    .spinner { width: 40px; height: 40px; border: 4px solid #e0e0e0; border-top-color: #4361ee; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .fc-error { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #c00; font-size: 1rem; max-width: 600px; padding: 2rem; z-index: 101; }
+  </style>
+</head>
+<body>
+
+  <!-- Toolbar -->
+  <div class="fc-toolbar">
+    <div class="fc-group" id="modeGroup">
+      <button class="fc-btn" data-mode="all" title="Show all lines (1)"><span class="fc-btn-icon">&#9776;</span> All</button>
+      <button class="fc-btn" data-mode="diff" title="Show only differences (2)"><span class="fc-btn-icon">&#8800;</span> Diffs</button>
+      <button class="fc-btn" data-mode="same" title="Show only matching lines (3)"><span class="fc-btn-icon">&#61;</span> Same</button>
+      <button class="fc-btn fc-btn-active" data-mode="ctx" title="Differences with context (4)"><span class="fc-btn-icon">&#9636;</span> Context</button>
+    </div>
+    <button class="fc-btn" id="btnMinor" title="Treat whitespace-only changes as same (m)"><span class="fc-btn-icon">&#8776;</span> Minor</button>
+    <div class="fc-sep"></div>
+    <div class="fc-group">
+      <button class="fc-btn" id="btnPrev" title="Previous section (p)"><span class="fc-btn-icon">&#9650;</span> Prev</button>
+      <button class="fc-btn" id="btnNext" title="Next section (n)"><span class="fc-btn-icon">&#9660;</span> Next</button>
+    </div>
+    <div class="fc-sep"></div>
+    <button class="fc-btn" id="btnSwap" title="Swap left and right files"><span class="fc-btn-icon">&#8644;</span> Swap</button>
+    <span class="fc-title">File Compare</span>
+  </div>
+
+  <!-- File info bars -->
+  <div class="fc-file-bars">
+    <div class="fc-file-bar fc-file-bar-left" id="fileBarLeft" title="{{ left_path }}"></div>
+    <div class="fc-file-bar" id="fileBarRight" title="{{ right_path }}"></div>
+  </div>
+
+  <!-- Main: minimap + two synced panels -->
+  <div class="fc-main">
+    <div class="fc-minimap" id="minimapBox" title="Overview — click to navigate"><canvas id="minimap"></canvas></div>
+    <div class="fc-panels" id="panels">
+      <div class="fc-panel fc-panel-left" id="panelLeft"></div>
+      <div class="fc-panel" id="panelRight"></div>
+    </div>
+    <div class="fc-loading" id="loadingOverlay">
+      <div class="spinner"></div>
+      <p>Computing aligned diff&hellip;</p>
+    </div>
+    <div class="fc-error hidden" id="errorDisplay"></div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="fc-status" id="statusBar">
+    <span id="statChips"></span>
+    <span class="fc-sec-ind" id="secInd"></span>
+    <span class="fc-keys">1/2/3/4 views &middot; m minor &middot; n/p sections</span>
+  </div>
+
+  <script>
+  // ==============================================================
+  // FILE COMPARE - BeyondCompare-style aligned diff viewer
+  // All JS inline, no external files (project convention).
+  // ==============================================================
+
+  var LEFT_PATH = "{{ left_path|escapejs }}";
+  var RIGHT_PATH = "{{ right_path|escapejs }}";
+  var UNMATCHED_SIDE = "{{ unmatched_side|escapejs }}";
+
+  var DATA = null;        // raw response
+  var ROWS = [];          // aligned row model from the backend
+  var LHL = [], RHL = []; // per-line syntax-highlighted HTML
+  var MODE = "ctx";       // all | diff | same | ctx
+  var MINOR = false;      // treat whitespace-only rows as same
+  var EXPANDED = {};      // rowIdx -> 1 for user-expanded context rows
+  var SECTIONS = [];      // contiguous diff runs [{from,to}]
+  var CUR = -1;           // current section index
+  var VIS = [];           // currently rendered items [{r:idx} | {s:1,from,to,count}]
+  var CTX = 3;            // context lines around each diff
+
+  var panelLeft = document.getElementById("panelLeft");
+  var panelRight = document.getElementById("panelRight");
+
+  // ---- Utilities ----
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function sp(cls, text) { return '<span class="' + cls + '">' + esc(text) + "</span>"; }
+  function fmtSize(n) {
+    if (n === null || n === undefined) return "";
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " bytes";
+  }
+  function baseName(p) { return p.split(/[\\\/]/).pop(); }
+  function dirName(p) {
+    var parts = p.split(/[\\\/]/); parts.pop();
+    return parts.join("\\");
+  }
+
+  // ==============================================================
+  // Lightweight stateful syntax highlighter (decorative)
+  // ==============================================================
+  var C_KW = ("abstract assert boolean break byte case catch char class const continue default do double else enum " +
+    "extends final finally float for goto if implements import instanceof int interface long native new package " +
+    "private protected public return short static strictfp super switch synchronized this throw throws transient " +
+    "try void volatile while var record sealed permits yield function let typeof export async await of in delete " +
+    "undefined null true false namespace type readonly struct fn impl trait use mut pub mod match go func chan " +
+    "defer map range select string bool").split(" ");
+  var P_KW = ("and as assert async await break class continue def del elif else except finally for from global if " +
+    "import in is lambda nonlocal not or pass raise return try while with yield None True False self match case").split(" ");
+
+  function langOf(path) {
+    var ext = (path.split(".").pop() || "").toLowerCase();
+    var kw = {}, i;
+    if (ext === "py") {
+      for (i = 0; i < P_KW.length; i++) kw[P_KW[i]] = 1;
+      return { kind: "py", kw: kw };
+    }
+    if ("java,js,jsx,ts,tsx,c,h,cpp,hpp,cc,hh,cs,go,rs,kt,kts,scala,swift,m,mm,gradle".indexOf(ext) >= 0 && ext) {
+      for (i = 0; i < C_KW.length; i++) kw[C_KW[i]] = 1;
+      return { kind: "c", kw: kw };
+    }
+    return { kind: "plain", kw: {} };
+  }
+
+  function hlLine(text, st, lang) {
+    var out = "", i = 0, n = text.length;
+    while (i < n) {
+      if (st.block) {
+        var e = text.indexOf(st.block.end, i);
+        if (e < 0) { out += sp(st.block.cls, text.slice(i)); i = n; }
+        else { out += sp(st.block.cls, text.slice(i, e + st.block.end.length)); i = e + st.block.end.length; st.block = null; }
+        continue;
+      }
+      var ch = text.charAt(i);
+      if (lang.kind === "c") {
+        if (ch === "/" && text.charAt(i + 1) === "/") { out += sp("sc", text.slice(i)); break; }
+        if (ch === "/" && text.charAt(i + 1) === "*") {
+          var e2 = text.indexOf("*/", i + 2);
+          if (e2 < 0) { st.block = { end: "*/", cls: "sc" }; out += sp("sc", text.slice(i)); break; }
+          out += sp("sc", text.slice(i, e2 + 2)); i = e2 + 2; continue;
+        }
+      } else if (lang.kind === "py") {
+        if (ch === "#") { out += sp("sc", text.slice(i)); break; }
+        if (ch === '"' || ch === "'") {
+          var tq = ch + ch + ch;
+          if (text.substr(i, 3) === tq) {
+            var e3 = text.indexOf(tq, i + 3);
+            if (e3 < 0) { st.block = { end: tq, cls: "ss" }; out += sp("ss", text.slice(i)); break; }
+            out += sp("ss", text.slice(i, e3 + 3)); i = e3 + 3; continue;
+          }
+        }
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        var j = i + 1;
+        while (j < n) {
+          var c2 = text.charAt(j);
+          if (c2 === "\\") j += 2;
+          else if (c2 === ch) { j++; break; }
+          else j++;
+        }
+        out += sp("ss", text.slice(i, j)); i = j; continue;
+      }
+      if (/[A-Za-z_$]/.test(ch)) {
+        var mw = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(text.slice(i))[0];
+        out += lang.kw[mw] ? sp("sk", mw) : esc(mw);
+        i += mw.length; continue;
+      }
+      if (ch >= "0" && ch <= "9") {
+        var mn = /^[0-9][0-9A-Za-z_.]*/.exec(text.slice(i))[0];
+        out += sp("sn", mn); i += mn.length; continue;
+      }
+      var k = i + 1;
+      while (k < n && !/[A-Za-z0-9_$"'`#\/]/.test(text.charAt(k))) k++;
+      out += esc(text.slice(i, k)); i = k;
+    }
+    return out;
+  }
+
+  function highlightAll(lines, lang) {
+    if (lang.kind === "plain") {
+      var plain = [];
+      for (var p = 0; p < lines.length; p++) plain.push(esc(lines[p]));
+      return plain;
+    }
+    var st = { block: null }, out = [];
+    for (var i = 0; i < lines.length; i++) out.push(hlLine(lines[i], st, lang));
+    return out;
+  }
+
+  // ==============================================================
+  // Row model helpers
+  // ==============================================================
+  function efft(row) {
+    // effective type honoring the Minor toggle
+    if (row.m && MINOR) return "eq";
+    return row.t;
+  }
+  function isDiff(row) { return efft(row) !== "eq"; }
+
+  function computeSections() {
+    SECTIONS = [];
+    var i = 0, n = ROWS.length;
+    while (i < n) {
+      if (isDiff(ROWS[i])) {
+        var j = i;
+        while (j < n && isDiff(ROWS[j])) j++;
+        SECTIONS.push({ from: i, to: j - 1 });
+        i = j;
+      } else i++;
+    }
+    CUR = -1;
+  }
+
+  // ==============================================================
+  // Visibility (filters + collapsible context)
+  // ==============================================================
+  function buildVisible() {
+    var vis = [], i, n = ROWS.length;
+    if (MODE === "all") { for (i = 0; i < n; i++) vis.push({ r: i }); return vis; }
+    if (MODE === "diff") { for (i = 0; i < n; i++) if (isDiff(ROWS[i])) vis.push({ r: i }); return vis; }
+    if (MODE === "same") { for (i = 0; i < n; i++) if (!isDiff(ROWS[i])) vis.push({ r: i }); return vis; }
+
+    // Context mode: diffs + CTX surrounding lines, equal runs collapsed
+    var show = new Array(n);
+    for (i = 0; i < n; i++) {
+      if (isDiff(ROWS[i])) {
+        var a = Math.max(0, i - CTX), b = Math.min(n - 1, i + CTX);
+        for (var k = a; k <= b; k++) show[k] = true;
+      }
+    }
+    for (i = 0; i < n; i++) if (EXPANDED[i]) show[i] = true;
+
+    i = 0;
+    while (i < n) {
+      if (show[i]) { vis.push({ r: i }); i++; continue; }
+      var j = i;
+      while (j < n && !show[j]) j++;
+      if (j - i <= 2) { for (var q = i; q < j; q++) vis.push({ r: q }); }
+      else vis.push({ s: 1, from: i, to: j - 1, count: j - i });
+      i = j;
+    }
+    return vis;
+  }
+
+  // ==============================================================
+  // Rendering
+  // ==============================================================
+  function segHtml(segs) {
+    var h = "";
+    for (var i = 0; i < segs.length; i++) {
+      h += segs[i][1] ? '<span class="ch">' + esc(segs[i][0]) + "</span>" : esc(segs[i][0]);
+    }
+    return h;
+  }
+
+  function lineHtml(row, side, idx) {
+    var num = side === "l" ? row.l : row.r;
+    if (!num) {
+      return '<div class="fcl t-gap" data-i="' + idx + '"><span class="g"></span><span class="c"> </span></div>';
+    }
+    var t = efft(row), cls;
+    if (t === "eq") cls = "t-eq";
+    else if (row.m) cls = "t-min";
+    else if (t === "mod") cls = "t-mod";
+    else cls = t === "del" ? "t-del" : "t-add";
+
+    var content;
+    var segs = side === "l" ? row.ls : row.rs;
+    if (segs && cls === "t-mod") content = segHtml(segs);
+    else content = side === "l" ? LHL[row.l - 1] : RHL[row.r - 1];
+
+    return '<div class="fcl ' + cls + '" data-i="' + idx + '"><span class="g">' + num +
+           '</span><span class="c">' + (content || " ") + "</span></div>";
+  }
+
+  function sepHtml(v) {
+    return '<div class="fcl t-sep" data-from="' + v.from + '" data-to="' + v.to +
+           '"><span class="g">&#8853;</span><span class="c">&#183;&#183;&#183;  ' + v.count +
+           " unchanged lines &mdash; click to expand  &#183;&#183;&#183;</span></div>";
+  }
+
+  function render() {
+    VIS = buildVisible();
+    var lh = "", rh = "";
+    for (var i = 0; i < VIS.length; i++) {
+      var v = VIS[i];
+      if (v.s) { var s = sepHtml(v); lh += s; rh += s; continue; }
+      lh += lineHtml(ROWS[v.r], "l", v.r);
+      rh += lineHtml(ROWS[v.r], "r", v.r);
+    }
+    if (!VIS.length) {
+      var em = '<div class="fcl t-eq"><span class="g"></span><span class="c" style="color:#999;font-style:italic;">No lines match the current view.</span></div>';
+      lh = em; rh = em;
+    }
+    panelLeft.innerHTML = lh;
+    panelRight.innerHTML = rh;
+    drawMinimap();
+  }
+
+  // ==============================================================
+  // Status bar
+  // ==============================================================
+  function updateStatus() {
+    var mod = 0, add = 0, del = 0, min = 0;
+    for (var i = 0; i < ROWS.length; i++) {
+      var r = ROWS[i];
+      if (r.m) { min++; continue; }
+      if (r.t === "mod") mod++;
+      else if (r.t === "add") add++;
+      else if (r.t === "del") del++;
+    }
+    var el = document.getElementById("statChips");
+    if (!mod && !add && !del && !min) {
+      el.innerHTML = '<span class="fc-identical">&#10003; Files are identical</span>';
+    } else {
+      el.innerHTML =
+        '<span class="fc-chip"><span class="fc-dot fc-dot-mod"></span>' + mod + " modified</span> &nbsp; " +
+        '<span class="fc-chip"><span class="fc-dot fc-dot-add"></span>' + add + " added</span> &nbsp; " +
+        '<span class="fc-chip"><span class="fc-dot fc-dot-del"></span>' + del + " deleted</span> &nbsp; " +
+        '<span class="fc-chip"><span class="fc-dot fc-dot-min"></span>' + min + " minor</span>";
+    }
+    updateSecInd();
+  }
+  function updateSecInd() {
+    var el = document.getElementById("secInd");
+    if (!SECTIONS.length) { el.textContent = ""; return; }
+    el.textContent = "Section " + (CUR >= 0 ? (CUR + 1) : "-") + " / " + SECTIONS.length;
+  }
+
+  // ==============================================================
+  // Section navigation
+  // ==============================================================
+  function gotoSection(k) {
+    if (!SECTIONS.length) return;
+    if (k < 0) k = 0;
+    if (k >= SECTIONS.length) k = SECTIONS.length - 1;
+    CUR = k;
+    if (MODE === "same") setMode("ctx");   // diffs are hidden in Same view
+    var sec = SECTIONS[k];
+    var el = panelLeft.querySelector('[data-i="' + sec.from + '"]');
+    if (!el) { render(); el = panelLeft.querySelector('[data-i="' + sec.from + '"]'); }
+    if (el) el.scrollIntoView({ block: "center" });
+    flashSection(sec);
+    updateSecInd();
+  }
+  function flashSection(sec) {
+    var panels = [panelLeft, panelRight];
+    for (var p = 0; p < 2; p++) {
+      for (var i = sec.from; i <= sec.to; i++) {
+        var el = panels[p].querySelector('[data-i="' + i + '"]');
+        if (el) {
+          el.classList.remove("flash");
+          void el.offsetWidth;   // restart animation
+          el.classList.add("flash");
+        }
+      }
+    }
+  }
+
+  // ==============================================================
+  // Minimap
+  // ==============================================================
+  var mmRaf = false;
+  function drawMinimap() {
+    var box = document.getElementById("minimapBox");
+    var cv = document.getElementById("minimap");
+    var W = box.clientWidth, H = box.clientHeight;
+    if (!W || !H) return;
+    cv.width = W; cv.height = H;
+    var ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, W, H);
+    var n = VIS.length || 1;
+    var bh = Math.max(1, H / n);
+    for (var i = 0; i < VIS.length; i++) {
+      var v = VIS[i], color = null;
+      if (v.s) color = "#c9d0d9";
+      else {
+        var t = efft(ROWS[v.r]);
+        if (t === "eq") continue;
+        if (ROWS[v.r].m) color = "#6b9ae8";
+        else if (t === "mod") color = "#f0a832";
+        else if (t === "del") color = "#e05555";
+        else if (t === "add") color = "#3fae5c";
+      }
+      if (color) { ctx.fillStyle = color; ctx.fillRect(2, i / n * H, W - 4, bh); }
+    }
+    // viewport indicator
+    var sh = panelLeft.scrollHeight || 1;
+    var vy = panelLeft.scrollTop / sh * H;
+    var vh = Math.max(8, panelLeft.clientHeight / sh * H);
+    ctx.fillStyle = "rgba(67,97,238,0.15)";
+    ctx.fillRect(0, vy, W, vh);
+    ctx.strokeStyle = "rgba(67,97,238,0.6)";
+    ctx.strokeRect(0.5, vy + 0.5, W - 1, Math.max(1, vh - 1));
+  }
+  function scheduleMinimap() {
+    if (mmRaf) return;
+    mmRaf = true;
+    requestAnimationFrame(function () { mmRaf = false; drawMinimap(); });
+  }
+  (function () {
+    var box = document.getElementById("minimapBox");
+    var dragging = false;
+    function jump(e) {
+      var rect = box.getBoundingClientRect();
+      var frac = (e.clientY - rect.top) / rect.height;
+      panelLeft.scrollTop = frac * panelLeft.scrollHeight - panelLeft.clientHeight / 2;
+    }
+    box.addEventListener("mousedown", function (e) { dragging = true; jump(e); e.preventDefault(); });
+    document.addEventListener("mousemove", function (e) { if (dragging) jump(e); });
+    document.addEventListener("mouseup", function () { dragging = false; });
+  })();
+  window.addEventListener("resize", scheduleMinimap);
+
+  // ==============================================================
+  // Synchronized scrolling
+  // ==============================================================
+  (function () {
+    var syncing = false;
+    panelLeft.addEventListener("scroll", function () {
+      scheduleMinimap();
+      if (syncing) return;
+      syncing = true;
+      panelRight.scrollTop = panelLeft.scrollTop;
+      panelRight.scrollLeft = panelLeft.scrollLeft;
+      requestAnimationFrame(function () { syncing = false; });
+    });
+    panelRight.addEventListener("scroll", function () {
+      if (syncing) return;
+      syncing = true;
+      panelLeft.scrollTop = panelRight.scrollTop;
+      panelLeft.scrollLeft = panelRight.scrollLeft;
+      requestAnimationFrame(function () { syncing = false; });
+    });
+  })();
+
+  // ==============================================================
+  // Toolbar
+  // ==============================================================
+  function setMode(mode) {
+    MODE = mode;
+    if (mode === "ctx") EXPANDED = {};
+    var btns = document.querySelectorAll("#modeGroup .fc-btn");
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle("fc-btn-active", btns[i].getAttribute("data-mode") === mode);
+    }
+    render();
+  }
+
+  document.getElementById("modeGroup").addEventListener("click", function (e) {
+    var btn = e.target.closest ? e.target.closest("[data-mode]") : null;
+    if (btn && !UNMATCHED_SIDE) setMode(btn.getAttribute("data-mode"));
+  });
+  document.getElementById("btnMinor").addEventListener("click", function () {
+    if (UNMATCHED_SIDE) return;
+    MINOR = !MINOR;
+    this.classList.toggle("fc-on", MINOR);
+    computeSections();
+    render();
+    updateStatus();
+  });
+  document.getElementById("btnPrev").addEventListener("click", function () { gotoSection(CUR <= 0 ? 0 : CUR - 1); });
+  document.getElementById("btnNext").addEventListener("click", function () { gotoSection(CUR + 1); });
+  document.getElementById("btnSwap").addEventListener("click", function () {
+    if (UNMATCHED_SIDE) return;
+    location.href = "/file-compare/?left=" + encodeURIComponent(RIGHT_PATH) +
+                    "&right=" + encodeURIComponent(LEFT_PATH);
+  });
+
+  // Expand collapsed context on click
+  document.getElementById("panels").addEventListener("click", function (e) {
+    var sep = e.target.closest ? e.target.closest(".t-sep") : null;
+    if (!sep) return;
+    var from = parseInt(sep.getAttribute("data-from"), 10);
+    var to = parseInt(sep.getAttribute("data-to"), 10);
+    for (var i = from; i <= to; i++) EXPANDED[i] = 1;
+    render();
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener("keydown", function (e) {
+    if (UNMATCHED_SIDE) return;
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.key === "1") setMode("all");
+    else if (e.key === "2") setMode("diff");
+    else if (e.key === "3") setMode("same");
+    else if (e.key === "4") setMode("ctx");
+    else if (e.key === "m") document.getElementById("btnMinor").click();
+    else if (e.key === "n") gotoSection(CUR + 1);
+    else if (e.key === "p") gotoSection(CUR <= 0 ? 0 : CUR - 1);
+  });
+
+  // ==============================================================
+  // File info bars
+  // ==============================================================
+  function fillFileBar(id, path, meta) {
+    var el = document.getElementById(id);
+    if (!path) { el.classList.add("fc-file-bar-empty"); el.innerHTML = '<span class="fb-name">(no file)</span>'; return; }
+    var metaTxt = "";
+    if (meta && meta.size !== null && meta.size !== undefined) {
+      metaTxt = fmtSize(meta.size) + (meta.mtime ? " &middot; " + meta.mtime : "");
+    }
+    el.innerHTML = '<span class="fb-name">' + esc(baseName(path)) + "</span>" +
+                   '<span class="fb-dir">&#x200E;' + esc(dirName(path)) + "</span>" +
+                   (metaTxt ? '<span class="fb-meta">' + metaTxt + "</span>" : "");
+  }
+
+  // ==============================================================
+  // Error display
+  // ==============================================================
+  function showError(msg) {
+    document.getElementById("loadingOverlay").classList.add("hidden");
+    var el = document.getElementById("errorDisplay");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+
+  // ==============================================================
+  // UNMATCHED single-file mode
+  // ==============================================================
+  function setupUnmatched() {
+    var btns = document.querySelectorAll(".fc-btn");
+    for (var i = 0; i < btns.length; i++) btns[i].classList.add("fc-btn-disabled");
+    document.getElementById("minimapBox").style.display = "none";
+
+    var filePath = UNMATCHED_SIDE === "left" ? LEFT_PATH : RIGHT_PATH;
+    var url = "/api/file-diff/?unmatched=" + encodeURIComponent(UNMATCHED_SIDE) +
+              (UNMATCHED_SIDE === "left" ? "&left=" : "&right=") + encodeURIComponent(filePath);
+
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || "Error " + r.status); });
+        return r.json();
+      })
+      .then(function (data) {
+        document.getElementById("loadingOverlay").classList.add("hidden");
+        var lines = UNMATCHED_SIDE === "left" ? data.left_lines : data.right_lines;
+        var hl = highlightAll(lines, langOf(filePath));
+        var html = "";
+        for (var i = 0; i < lines.length; i++) {
+          html += '<div class="fcl t-unm"><span class="g">' + (i + 1) + '</span><span class="c">' + (hl[i] || " ") + "</span></div>";
+        }
+        var filePanel = UNMATCHED_SIDE === "left" ? panelLeft : panelRight;
+        var emptyPanel = UNMATCHED_SIDE === "left" ? panelRight : panelLeft;
+        filePanel.innerHTML = html;
+        emptyPanel.innerHTML = "";
+        emptyPanel.classList.add("fc-panel-empty-side");
+        fillFileBar(UNMATCHED_SIDE === "left" ? "fileBarLeft" : "fileBarRight", filePath, null);
+        fillFileBar(UNMATCHED_SIDE === "left" ? "fileBarRight" : "fileBarLeft", "", null);
+        document.getElementById("statChips").innerHTML =
+          '<span class="fc-chip"><span class="fc-dot fc-dot-del"></span>Unmatched file &mdash; ' + lines.length + " lines, no counterpart</span>";
+        document.title = baseName(filePath) + " (Unmatched) - File Compare";
+      })
+      .catch(function (err) { showError(err.message || "Failed to read file"); });
+  }
+
+  // ==============================================================
+  // Init
+  // ==============================================================
+  function init() {
+    if (UNMATCHED_SIDE) { setupUnmatched(); return; }
+    if (!LEFT_PATH || !RIGHT_PATH) {
+      showError("Missing file paths. Please open this page from the comparison results.");
+      return;
+    }
+    document.title = baseName(LEFT_PATH) + " ↔ " + baseName(RIGHT_PATH) + " - File Compare";
+
+    fetch("/api/file-diff/?left=" + encodeURIComponent(LEFT_PATH) + "&right=" + encodeURIComponent(RIGHT_PATH))
+      .then(function (r) {
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || "Error " + r.status); });
+        return r.json();
+      })
+      .then(function (data) {
+        DATA = data;
+        ROWS = data.rows || [];
+        LHL = highlightAll(data.left_lines || [], langOf(LEFT_PATH));
+        RHL = highlightAll(data.right_lines || [], langOf(RIGHT_PATH));
+        document.getElementById("loadingOverlay").classList.add("hidden");
+        fillFileBar("fileBarLeft", LEFT_PATH, data.left_meta);
+        fillFileBar("fileBarRight", RIGHT_PATH, data.right_meta);
+        computeSections();
+        render();
+        updateStatus();
+      })
+      .catch(function (err) { showError(err.message || "Failed to compute diff"); });
+  }
+
+  init();
+  </script>
+</body>
+</html>
