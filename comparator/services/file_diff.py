@@ -23,10 +23,13 @@ Row shapes (JSON-friendly dicts):
 Line numbers are 1-based; a missing side means "render a gap".
 """
 import difflib
+import logging
 import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Word-level tokenizer for intra-line diffs: words, whitespace runs, punctuation
 _TOKEN_RE = re.compile(r'\w+|\s+|[^\w\s]')
@@ -37,13 +40,20 @@ MAX_PAIR_AREA = 2500    # L*R above this -> cheap sequential pairing (perf guard
 
 
 def _read_file(path: str) -> str:
-    """Read a file with encoding fallback."""
+    """Read a file with encoding fallback.
+
+    Returns '' when the file is undecodable OR unreadable (vanished /
+    permission-denied) -- mirrors correspondence.py; keep both in sync.
+    """
     for enc in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
         try:
             with open(path, 'r', encoding=enc) as fh:
                 return fh.read()
         except (UnicodeDecodeError, UnicodeError):
             continue
+        except OSError:
+            logger.warning("Unreadable file skipped: %s", path)
+            return ''
     return ''
 
 

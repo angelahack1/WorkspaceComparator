@@ -22,6 +22,19 @@ MODEL_NAME = "glm-5.2:cloud"
 # Maximum characters per file sent to the LLM (keeps context manageable)
 MAX_FILE_CHARS = 6000
 
+# Token budget for the reply.  Deliberately generous: if the "think"
+# option below is not honoured (older Ollama), reasoning tokens count
+# against this budget, and a tight limit (the old 16) cuts generation
+# before the number is ever produced -> empty response -> the
+# "LLM returned non-numeric answer" failure mode.
+NUM_PREDICT = 256
+
+# Whether to send the top-level "think": false parameter.  glm-5.2 is a
+# thinking-capable model; without this it burns the token budget on
+# reasoning.  Flipped off at runtime if the server rejects the param
+# (HTTP 400 from older Ollama versions / non-thinking models).
+_send_think_param = True
+
 # -----------------------------------------------------------------------
 # Prompt template
 # -----------------------------------------------------------------------
@@ -121,31 +134,19 @@ def compare_with_llm(
     )
 
     try:
-        resp = requests.post(
-            OLLAMA_GENERATE,
-            json={
-                "model": MODEL_NAME,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.05,
-                    "num_predict": 16,
-                },
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        answer = resp.json().get("response", "").strip()
+        data = _post_generate(prompt)
+        answer = (data.get("response") or "").strip()
+        thinking = (data.get("thinking") or "").strip()
         logger.info("LLM raw answer for %s <-> %s: %r",
                      filename_a, filename_b, answer)
 
-        numbers = re.findall(r'\d+', answer)
-        if numbers:
-            pct = int(numbers[0])
-            return max(0, min(100, pct))
-
-        logger.warning("LLM returned non-numeric answer: %r", answer)
-        return -1
+        pct = _parse_score(answer, thinking)
+        if pct == -1:
+            logger.warning(
+                "LLM returned non-numeric answer: %r (thinking: %r)",
+                answer, thinking[:200],
+            )
+        return pct
 
     except requests.exceptions.ConnectionError:
         logger.warning("Ollama not reachable at %s", OLLAMA_BASE)
@@ -161,6 +162,71 @@ def compare_with_llm(
 # -----------------------------------------------------------------------
 # Internals
 # -----------------------------------------------------------------------
+
+# <think> ... </think> blocks leaked into the visible response by
+# thinking models (closing tag may be missing when generation is cut).
+_THINK_BLOCK = re.compile(r'<think>.*?(?:</think>|$)', re.DOTALL)
+
+
+def _post_generate(prompt: str) -> dict:
+    """POST to Ollama /api/generate, disabling model 'thinking'.
+
+    If the server rejects the "think" parameter (HTTP 400 on older
+    Ollama versions or non-thinking models), retry once without it and
+    remember the choice for the rest of the process.
+    """
+    global _send_think_param
+
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.05,
+            "num_predict": NUM_PREDICT,
+        },
+    }
+    if _send_think_param:
+        payload["think"] = False
+
+    resp = requests.post(OLLAMA_GENERATE, json=payload, timeout=120)
+    if resp.status_code == 400 and _send_think_param:
+        logger.info("Ollama rejected 'think' parameter -- retrying without it")
+        _send_think_param = False
+        payload.pop("think", None)
+        resp = requests.post(OLLAMA_GENERATE, json=payload, timeout=120)
+
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _parse_score(answer: str, thinking: str = '') -> int:
+    """Extract the 0-100 score from a model reply.
+
+    Tolerates leaked reasoning: strips <think> blocks, and when the
+    visible response is empty falls back to the separate 'thinking'
+    text.  When extra prose surrounds the number, the LAST number wins
+    (reasoning ends with the conclusion; the first number is usually a
+    rule reference or line quote).
+    """
+    cleaned = _THINK_BLOCK.sub('', answer).strip()
+    if not cleaned:
+        cleaned = thinking.strip()
+    if not cleaned:
+        return -1
+
+    if re.fullmatch(r'\d+', cleaned):
+        return max(0, min(100, int(cleaned)))
+
+    # "85/100" or "85 out of 100": drop the denominator so the last
+    # number is the score, not the scale.
+    cleaned = re.sub(r'(?i)\s*(?:/|out\s+of)\s*100\b', '', cleaned)
+
+    numbers = re.findall(r'\d+', cleaned)
+    if numbers:
+        return max(0, min(100, int(numbers[-1])))
+    return -1
+
 
 def _smart_truncate(content: str, limit: int = MAX_FILE_CHARS) -> str:
     """

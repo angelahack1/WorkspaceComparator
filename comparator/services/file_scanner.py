@@ -36,6 +36,10 @@ SKIP_DIRS = {
     'target', 'build', 'dist', 'bin', 'obj', 'out',
     '.idea', '.vscode', '.gradle', '.settings',
     'vendor', '.cargo', 'debug', 'release',
+    # Python environments / installed packages: an embedded runtime or
+    # venv carries thousands of third-party files (site-packages alone
+    # has ~1000s of __init__.py) that explode Phase 2 candidate sets.
+    'site-packages', 'venv', 'virtualenv', 'env', 'envs',
 }
 
 
