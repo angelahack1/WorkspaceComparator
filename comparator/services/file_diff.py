@@ -29,13 +29,22 @@ Row shapes (JSON-friendly dicts):
 'ls'/'rs' are lists of [text, changed] word-level segments.
 'm': 1 flags a *minor* row (whitespace-only change or blank line).
 Line numbers are 1-based; a missing side means "render a gap".
+
+HEX (binary) mode -- compute_hex_diff() -- reuses the same row shapes,
+but 'l'/'r' are 1-based indices of 16-byte rows (hexdump -C style) into
+base64-encoded byte windows; the UI formats the hexdump text and the
+per-byte highlighting itself.  There is no 'm' and no 'ls'/'rs' in hex
+rows.  See the "Hex (binary) comparison" section below.
 """
+import base64
 import difflib
 import logging
 import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
+
+from .binary_detect import bytes_equal, is_binary_file, match_cost, read_head
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +54,11 @@ _TOKEN_RE = re.compile(r'\w+|\s+|[^\w\s]')
 # Alignment tuning
 PAIR_THRESHOLD = 0.5    # minimum SequenceMatcher ratio for two lines to pair up
 MAX_PAIR_AREA = 2500    # L*R above this -> cheap sequential pairing (perf guard)
+
+# Hex (binary) comparison tuning
+HEX_BYTES_PER_ROW = 16        # canonical hexdump -C row width
+HEX_VIEW_MAX_BYTES = 131072   # 128 KB rendered per side; the rest is reported, not drawn
+_HEX_MAX_MATCH_COST = 8_000_000  # SequenceMatcher work bound -> offset pairing fallback
 
 
 def _read_file(path: str) -> str:
@@ -264,4 +278,134 @@ def compute_file_diff(left_path: str, right_path: str) -> Dict[str, Any]:
         'right_path': right_path,
         'left_meta': _file_meta(left_path),
         'right_meta': _file_meta(right_path),
+    }
+
+
+# ===================================================================
+# Hex (binary) comparison
+# ===================================================================
+# Binary files get a hexdump -C style aligned comparison instead of a
+# text diff.  Both files are chunked into 16-byte rows; the rows are
+# aligned with SequenceMatcher over the chunk lists (so inserted /
+# deleted 16-byte-multiple blocks produce proper gaps), and 'replace'
+# blocks are zipped positionally -- rows are fixed-width, so there is
+# nothing smarter to anchor on.  Per-byte change highlighting is
+# computed by the UI from the paired rows.
+#
+# Rendering is capped at HEX_VIEW_MAX_BYTES per side (the UI shows a
+# truncation notice); full-file byte equality is still computed on the
+# whole files, so 'identical' is always truthful.  Non-16-multiple
+# insertions shift every following row and degrade to a long run of
+# 'mod' rows -- accepted; BC-grade byte-level realignment is not worth
+# the complexity for artifact comparison.
+
+
+def _read_bytes_window(path: str) -> bytes:
+    return read_head(path, HEX_VIEW_MAX_BYTES)
+
+
+def _hex_chunks(data: bytes) -> List[bytes]:
+    return [data[i:i + HEX_BYTES_PER_ROW]
+            for i in range(0, len(data), HEX_BYTES_PER_ROW)]
+
+
+def _hex_rows(lchunks: List[bytes], rchunks: List[bytes]) -> List[Dict[str, Any]]:
+    """Aligned hex row model (1-based 16-byte row indices)."""
+    n_l, n_r = len(lchunks), len(rchunks)
+    if match_cost(lchunks, rchunks) <= _HEX_MAX_MATCH_COST:
+        sm = difflib.SequenceMatcher(None, lchunks, rchunks, autojunk=False)
+        opcodes = sm.get_opcodes()
+    else:
+        # Degenerate repetition (zero-page-heavy files): difflib would
+        # crawl, and alignment of low-information rows means little --
+        # pair rows by offset instead.
+        opcodes = [('replace', 0, n_l, 0, n_r)] if (n_l or n_r) else []
+
+    rows: List[Dict[str, Any]] = []
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == 'equal':
+            for k in range(i2 - i1):
+                rows.append({'t': 'eq', 'l': i1 + k + 1, 'r': j1 + k + 1})
+        elif tag == 'delete':
+            for i in range(i1, i2):
+                rows.append({'t': 'del', 'l': i + 1})
+        elif tag == 'insert':
+            for j in range(j1, j2):
+                rows.append({'t': 'add', 'r': j + 1})
+        else:  # replace: positional zip, leftovers become one-sided rows
+            n = min(i2 - i1, j2 - j1)
+            for k in range(n):
+                i, j = i1 + k, j1 + k
+                t = 'eq' if lchunks[i] == rchunks[j] else 'mod'
+                rows.append({'t': t, 'l': i + 1, 'r': j + 1})
+            for i in range(i1 + n, i2):
+                rows.append({'t': 'del', 'l': i + 1})
+            for j in range(j1 + n, j2):
+                rows.append({'t': 'add', 'r': j + 1})
+    return rows
+
+
+def _file_size(path: str) -> int:
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return 0
+
+
+def compute_hex_diff(left_path: str, right_path: str) -> Dict[str, Any]:
+    """
+    Hexdump-style aligned comparison of two (binary) files.
+
+    Returns a dict with:
+      - hex: True                  : marks the payload shape for the UI
+      - rows                       : aligned row model; 'l'/'r' are 1-based
+                                     16-byte row indices into the windows
+      - left_b64 / right_b64       : base64 of the rendered byte windows
+      - identical                  : FULL-file byte equality (never lies,
+                                     even when the view is truncated)
+      - truncated {left, right}    : window smaller than the file?
+      - left_total / right_total   : full file sizes in bytes
+      - left_binary / right_binary : content-level binary detection per side
+      - left_meta / right_meta     : {size, mtime} for the file info bars
+      - left_path / right_path
+    """
+    lb = _read_bytes_window(left_path)
+    rb = _read_bytes_window(right_path)
+    l_total, r_total = _file_size(left_path), _file_size(right_path)
+    identical = (l_total == r_total) and bytes_equal(left_path, right_path)
+
+    lchunks, rchunks = _hex_chunks(lb), _hex_chunks(rb)
+    if identical or lb == rb:
+        rows = [{'t': 'eq', 'l': i + 1, 'r': i + 1} for i in range(len(lchunks))]
+    else:
+        rows = _hex_rows(lchunks, rchunks)
+
+    return {
+        'hex': True,
+        'rows': rows,
+        'left_b64': base64.b64encode(lb).decode('ascii'),
+        'right_b64': base64.b64encode(rb).decode('ascii'),
+        'identical': identical,
+        'truncated': {'left': l_total > len(lb), 'right': r_total > len(rb)},
+        'left_total': l_total,
+        'right_total': r_total,
+        'left_binary': is_binary_file(left_path),
+        'right_binary': is_binary_file(right_path),
+        'left_meta': _file_meta(left_path),
+        'right_meta': _file_meta(right_path),
+        'left_path': left_path,
+        'right_path': right_path,
+    }
+
+
+def compute_hex_single(path: str) -> Dict[str, Any]:
+    """Hex payload for one file (unmatched single-file mode)."""
+    data = _read_bytes_window(path)
+    total = _file_size(path)
+    return {
+        'b64': base64.b64encode(data).decode('ascii'),
+        'truncated': total > len(data),
+        'total': total,
+        'binary': is_binary_file(path),
+        'meta': _file_meta(path),
     }

@@ -9,8 +9,11 @@
 """
 File Scanner Module
 -------------------
-Recursively scans directories for source code files, collecting metadata
-about each file for the correspondence engine.
+Recursively scans directories for source code files AND known binary
+artifacts (images, jars, keystores...), collecting metadata about each
+file for the correspondence engine.  Binary files are flagged with
+`is_binary` so the engine can route them to byte-level matching instead
+of the text/LLM pipeline.
 
 Supports user-defined exclusions (the UI's Exclusions dialog): wildcard
 patterns for files and directories.  Excluded directories are pruned
@@ -20,6 +23,8 @@ import fnmatch
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+
+from .binary_detect import BINARY_EXTENSIONS
 
 SOURCE_EXTENSIONS = {
     # C family
@@ -103,11 +108,12 @@ def _excluded(name: str, rel_path: str, patterns: List[str]) -> bool:
 
 @dataclass
 class FileInfo:
-    """Represents a source file found during directory scanning."""
+    """Represents a source or binary file found during directory scanning."""
     filename: str
     relative_dir: str
     full_path: str
     extension: str
+    is_binary: bool = False   # extension in BINARY_EXTENSIONS
 
     @property
     def relative_path(self) -> str:
@@ -120,6 +126,7 @@ class FileInfo:
             'name': self.filename,
             'directory': self.relative_dir,
             'full_path': self.full_path,
+            'binary': self.is_binary,
         }
 
 
@@ -128,7 +135,7 @@ def scan_directory(
     exclusions: Optional[Dict] = None,
 ) -> List[FileInfo]:
     """
-    Scan a directory recursively for source code files.
+    Scan a directory recursively for source code and known binary files.
 
     Args:
         root_path: Absolute path to the directory to scan.
@@ -167,7 +174,11 @@ def scan_directory(
 
         for filename in filenames:
             ext = os.path.splitext(filename)[1].lower()
-            if ext not in SOURCE_EXTENSIONS:
+            if ext in SOURCE_EXTENSIONS:
+                is_binary = False
+            elif ext in BINARY_EXTENSIONS:
+                is_binary = True
+            else:
                 continue
 
             rel_path = (relative_dir + '/' + filename) if relative_dir else filename
@@ -179,6 +190,7 @@ def scan_directory(
                 relative_dir=relative_dir,
                 full_path=os.path.join(dirpath, filename),
                 extension=ext,
+                is_binary=is_binary,
             ))
 
     return files

@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>File Compare · Workspace Comparator v1.2.0</title>
+  <title>File Compare · Workspace Comparator v1.3.0</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: "Segoe UI Variable", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; background: #eef1f5; color: #1a1a2e; }
@@ -26,6 +26,26 @@
     .fc-btn.fc-btn-disabled { opacity: 0.3; cursor: default !important; pointer-events: none; }
     .fc-sep { width: 1px; height: 22px; background: #3a4a5e; margin: 0 4px; }
     .fc-title { color: #7c8ea3; font-size: 0.74rem; margin-left: auto; letter-spacing: 0.5px; text-transform: uppercase; }
+
+    /* ================= HEX (binary view) switch ================= */
+    .fc-hex { display: inline-flex; align-items: center; gap: 7px; margin: 0 6px; cursor: pointer; user-select: none; -webkit-user-select: none; }
+    .fc-hex input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+    .fc-hex-track { width: 36px; height: 18px; border-radius: 9px; background: #3a4a5e; position: relative; transition: background 0.18s, box-shadow 0.18s; box-shadow: inset 0 1px 3px rgba(0,0,0,0.45); flex-shrink: 0; }
+    .fc-hex-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #aebbc9; transition: left 0.18s, background 0.18s; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+    .fc-hex input:checked + .fc-hex-track { background: linear-gradient(180deg, #17b3a6, #0e9488); box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(23,179,166,0.55); }
+    .fc-hex input:checked + .fc-hex-track::after { left: 20px; background: #fff; }
+    .fc-hex-label { font-size: 0.8rem; font-weight: 700; letter-spacing: 1.2px; color: #aebbc9; transition: color 0.18s, text-shadow 0.18s; }
+    .fc-hex input:checked ~ .fc-hex-label { color: #2fe0d0; text-shadow: 0 0 8px rgba(23,179,166,0.5); }
+    .fc-hex-lock { font-size: 0.72rem; line-height: 1; }
+    .fc-hex.fc-hex-forced { cursor: default; }
+
+    /* ================= Hex view rendering ================= */
+    .hx-z { color: #b3bdc7; }                          /* 0x00 bytes, dimmed */
+    .hx-a { color: #55606c; }                          /* ascii gutter */
+    .hx-p { color: #b9c2cc; }                          /* pipes around the ascii gutter */
+    .hexmode .fcl .g { color: #8a94a1; letter-spacing: 0.5px; }
+    .t-trunc, .t-trunc:hover .c { cursor: default !important; }
+    .fb-bin { background: linear-gradient(180deg, #17b3a6, #0e9488); color: #fff; border-radius: 4px; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.8px; padding: 1px 6px; flex-shrink: 0; align-self: center; box-shadow: 0 1px 3px rgba(14,148,136,0.5); }
 
     /* ================= File info bars ================= */
     .fc-file-bars { display: flex; flex-shrink: 0; }
@@ -124,6 +144,13 @@
     </div>
     <button class="fc-btn" id="btnMinor" title="Treat whitespace-only changes as same (m)"><span class="fc-btn-icon">&#8776;</span> Minor</button>
     <div class="fc-sep"></div>
+    <label class="fc-hex" id="hexCtl" title="Hexadecimal (binary) comparison view (h)">
+      <input type="checkbox" id="chkHex">
+      <span class="fc-hex-track"></span>
+      <span class="fc-hex-label">HEX</span>
+      <span class="fc-hex-lock hidden" id="hexLock" title="Binary file &mdash; hex view is required">&#128274;</span>
+    </label>
+    <div class="fc-sep"></div>
     <div class="fc-group">
       <button class="fc-btn" id="btnPrev" title="Previous section (p)"><span class="fc-btn-icon">&#9650;</span> Prev</button>
       <button class="fc-btn" id="btnNext" title="Next section (n)"><span class="fc-btn-icon">&#9660;</span> Next</button>
@@ -157,7 +184,7 @@
   <div class="fc-status" id="statusBar">
     <span id="statChips"></span>
     <span class="fc-sec-ind" id="secInd"></span>
-    <span class="fc-keys">1/2/3/4 views &middot; m minor &middot; n/p sections</span>
+    <span class="fc-keys" id="keysHint">1/2/3/4 views &middot; m minor &middot; h hex &middot; n/p sections</span>
   </div>
 
   <script>
@@ -169,8 +196,9 @@
   var LEFT_PATH = "{{ left_path|escapejs }}";
   var RIGHT_PATH = "{{ right_path|escapejs }}";
   var UNMATCHED_SIDE = "{{ unmatched_side|escapejs }}";
+  var FORCE_HEX = "{{ force_hex|escapejs }}" === "1";  // binary detected server-side: hex locked ON
 
-  var DATA = null;        // raw response
+  var DATA = null;        // raw text-mode response
   var ROWS = [];          // aligned row model from the backend
   var LHL = [], RHL = []; // per-line syntax-highlighted HTML
   var MODE = "ctx";       // all | diff | same | ctx
@@ -180,6 +208,13 @@
   var CUR = -1;           // current section index
   var VIS = [];           // currently rendered items [{r:idx} | {s:1,from,to,count}]
   var CTX = 3;            // context lines around each diff
+
+  // ---- HEX (binary) mode state ----
+  var HEX = FORCE_HEX || /[?&]hex=1/.test(location.search);  // hex view active?
+  var HEXDATA = null;                       // raw hex-mode response
+  var HEXL = new Uint8Array(0);             // decoded left byte window
+  var HEXR = new Uint8Array(0);             // decoded right byte window
+  var CACHE = { text: null, hex: null };    // per-mode response cache (toggle = no refetch)
 
   var panelLeft = document.getElementById("panelLeft");
   var panelRight = document.getElementById("panelRight");
@@ -197,6 +232,36 @@
   function dirName(p) {
     var parts = p.split(/[\\\/]/); parts.pop();
     return parts.join("\\");
+  }
+
+  // ---- Hex helpers ----
+  var _HD = "0123456789abcdef";
+  function hexPair(b) { return _HD[b >> 4] + _HD[b & 15]; }
+  function hex8(v) { var s = v.toString(16); while (s.length < 8) s = "0" + s; return s; }
+  function b64ToBytes(b64) {
+    var bin = atob(b64 || ""), n = bin.length, out = new Uint8Array(n);
+    for (var i = 0; i < n; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  // One canonical `hexdump -C` row body: 8 bytes, gap, 8 bytes, |ascii|.
+  // When `other` is given, bytes that differ from the paired row are
+  // wrapped in .ch (the same highlight used for changed words).
+  function hexCells(bytes, off, other, oOff) {
+    var hx = "", asc = "", end = Math.min(off + 16, bytes.length);
+    for (var i = 0; i < 16; i++) {
+      if (i === 8) hx += " ";
+      var p = off + i;
+      if (p >= end) { hx += "   "; asc += " "; continue; }
+      var b = bytes[p];
+      var pair = hexPair(b);
+      var aCh = (b >= 32 && b <= 126) ? String.fromCharCode(b) : ".";
+      if (aCh === "&") aCh = "&amp;"; else if (aCh === "<") aCh = "&lt;"; else if (aCh === ">") aCh = "&gt;";
+      var chg = other !== null && (oOff < 0 || oOff + i >= other.length || other[oOff + i] !== b);
+      if (chg) { hx += '<span class="ch">' + pair + "</span> "; asc += '<span class="ch">' + aCh + "</span>"; }
+      else if (b === 0) { hx += '<span class="hx-z">' + pair + "</span> "; asc += '<span class="hx-z">.</span>'; }
+      else { hx += pair + " "; asc += aCh; }
+    }
+    return hx + ' <span class="hx-p">|</span><span class="hx-a">' + asc + '</span><span class="hx-p">|</span>';
   }
 
   // ==============================================================
@@ -376,25 +441,64 @@
            '</span><span class="c">' + (content || " ") + "</span></div>";
   }
 
+  // Hex twin of lineHtml: same one-.fcl-per-row contract, but the
+  // gutter shows the byte offset and the content is a hexdump -C row.
+  function hexLineHtml(row, side, idx) {
+    var num = side === "l" ? row.l : row.r;
+    if (!num) {
+      return '<div class="fcl t-gap" data-i="' + idx + '"><span class="g"></span><span class="c"> </span></div>';
+    }
+    var t = efft(row), cls;
+    if (t === "eq") cls = "t-eq";
+    else if (t === "mod") cls = "t-mod";
+    else cls = t === "del" ? "t-del" : "t-add";
+
+    var bytes = side === "l" ? HEXL : HEXR;
+    var oNum = side === "l" ? row.r : row.l;
+    var off = (num - 1) * 16;
+    // Per-byte change marks only make sense on a paired 'mod' row
+    var other = (t === "mod" && oNum) ? (side === "l" ? HEXR : HEXL) : null;
+    var oOff = oNum ? (oNum - 1) * 16 : -1;
+
+    return '<div class="fcl ' + cls + '" data-i="' + idx + '"><span class="g">' + hex8(off) +
+           '</span><span class="c">' + hexCells(bytes, off, other, oOff) + "</span></div>";
+  }
+
   function sepHtml(v) {
     return '<div class="fcl t-sep" data-from="' + v.from + '" data-to="' + v.to +
            '"><span class="g">&#8853;</span><span class="c">&#183;&#183;&#183;  ' + v.count +
-           " unchanged lines &mdash; click to expand  &#183;&#183;&#183;</span></div>";
+           " unchanged " + (HEX ? "rows" : "lines") + " &mdash; click to expand  &#183;&#183;&#183;</span></div>";
+  }
+
+  // Honest footer when the hex windows are smaller than the files
+  function truncNoticeHtml() {
+    if (!HEX || !HEXDATA || !HEXDATA.truncated) return "";
+    var t = HEXDATA.truncated, more = [];
+    if (t.left) more.push("left +" + fmtSize(HEXDATA.left_total - HEXL.length));
+    if (t.right) more.push("right +" + fmtSize(HEXDATA.right_total - HEXR.length));
+    if (!more.length) return "";
+    var shown = HEXL.length > HEXR.length ? HEXL.length : HEXR.length;
+    return '<div class="fcl t-sep t-trunc"><span class="g">&#8942;</span><span class="c">&#183;&#183;&#183;  hex view truncated &mdash; showing the first ' +
+           fmtSize(shown) + " per side (" + more.join(", ") + " not rendered)  &#183;&#183;&#183;</span></div>";
   }
 
   function render() {
     VIS = buildVisible();
+    var mk = HEX ? hexLineHtml : lineHtml;
     var lh = "", rh = "";
     for (var i = 0; i < VIS.length; i++) {
       var v = VIS[i];
       if (v.s) { var s = sepHtml(v); lh += s; rh += s; continue; }
-      lh += lineHtml(ROWS[v.r], "l", v.r);
-      rh += lineHtml(ROWS[v.r], "r", v.r);
+      lh += mk(ROWS[v.r], "l", v.r);
+      rh += mk(ROWS[v.r], "r", v.r);
     }
     if (!VIS.length) {
-      var em = '<div class="fcl t-eq"><span class="g"></span><span class="c" style="color:#999;font-style:italic;">No lines match the current view.</span></div>';
+      var em = '<div class="fcl t-eq"><span class="g"></span><span class="c" style="color:#999;font-style:italic;">' +
+               (HEX ? "No rows match the current view." : "No lines match the current view.") + "</span></div>";
       lh = em; rh = em;
     }
+    var tn = truncNoticeHtml();   // same element in both panels keeps alignment
+    lh += tn; rh += tn;
     panelLeft.innerHTML = lh;
     panelRight.innerHTML = rh;
     drawMinimap();
@@ -413,6 +517,27 @@
       else if (r.t === "del") del++;
     }
     var el = document.getElementById("statChips");
+    if (HEX) {
+      // Hex mode: 'identical' is the FULL-file verdict from the backend
+      // (the rendered window may be truncated); row counts are 16-byte rows.
+      var truncated = HEXDATA && HEXDATA.truncated && (HEXDATA.truncated.left || HEXDATA.truncated.right);
+      var extra = truncated
+        ? ' &nbsp; <span class="fc-chip" style="color:#8b95a3;">&#9888; view truncated at ' +
+          fmtSize(HEXL.length > HEXR.length ? HEXL.length : HEXR.length) + "</span>"
+        : "";
+      if (HEXDATA && HEXDATA.identical) {
+        el.innerHTML = '<span class="fc-identical">&#10003; Files are byte-for-byte identical</span>' + extra;
+      } else if (!mod && !add && !del) {
+        el.innerHTML = '<span class="fc-chip" style="color:#c0392b;font-weight:700;">&#8800; Files differ beyond the rendered window</span>' + extra;
+      } else {
+        el.innerHTML =
+          '<span class="fc-chip"><span class="fc-dot fc-dot-mod"></span>' + mod + " changed rows</span> &nbsp; " +
+          '<span class="fc-chip"><span class="fc-dot fc-dot-add"></span>' + add + " added</span> &nbsp; " +
+          '<span class="fc-chip"><span class="fc-dot fc-dot-del"></span>' + del + " deleted</span>" + extra;
+      }
+      updateSecInd();
+      return;
+    }
     if (!mod && !add && !del && !min) {
       el.innerHTML = '<span class="fc-identical">&#10003; Files are identical</span>';
     } else {
@@ -555,7 +680,7 @@
     if (btn && !UNMATCHED_SIDE) setMode(btn.getAttribute("data-mode"));
   });
   document.getElementById("btnMinor").addEventListener("click", function () {
-    if (UNMATCHED_SIDE) return;
+    if (UNMATCHED_SIDE || HEX) return;   // no 'minor' concept in a byte stream
     MINOR = !MINOR;
     this.classList.toggle("fc-on", MINOR);
     computeSections();
@@ -567,28 +692,58 @@
   document.getElementById("btnSwap").addEventListener("click", function () {
     if (UNMATCHED_SIDE) return;
     location.href = "/file-compare/?left=" + encodeURIComponent(RIGHT_PATH) +
-                    "&right=" + encodeURIComponent(LEFT_PATH);
+                    "&right=" + encodeURIComponent(LEFT_PATH) +
+                    (HEX && !FORCE_HEX ? "&hex=1" : "");
   });
+
+  // ---- HEX switch ----
+  function syncHexCtl() {
+    var chk = document.getElementById("chkHex");
+    chk.checked = HEX;
+    chk.disabled = FORCE_HEX;
+    document.getElementById("hexLock").classList.toggle("hidden", !FORCE_HEX);
+    var ctl = document.getElementById("hexCtl");
+    ctl.classList.toggle("fc-hex-forced", FORCE_HEX);
+    ctl.title = FORCE_HEX ? "Binary file — hex view is required"
+                          : "Hexadecimal (binary) comparison view (h)";
+  }
+  function setHex(on) {
+    if (FORCE_HEX) { syncHexCtl(); return; }   // a binary can never leave hex view
+    on = !!on;
+    if (HEX === on) return;
+    HEX = on;
+    try {   // keep the mode in the URL so refresh / bookmark preserves it
+      var u = new URL(location.href);
+      if (on) u.searchParams.set("hex", "1"); else u.searchParams.delete("hex");
+      history.replaceState(null, "", u);
+    } catch (err) {}
+    syncHexCtl();
+    loadView();
+  }
+  document.getElementById("chkHex").addEventListener("change", function () { setHex(this.checked); });
 
   // Expand collapsed context on click
   document.getElementById("panels").addEventListener("click", function (e) {
     var sep = e.target.closest ? e.target.closest(".t-sep") : null;
-    if (!sep) return;
+    if (!sep || !sep.getAttribute("data-from")) return;   // truncation notice is not expandable
     var from = parseInt(sep.getAttribute("data-from"), 10);
     var to = parseInt(sep.getAttribute("data-to"), 10);
     for (var i = from; i <= to; i++) EXPANDED[i] = 1;
     render();
   });
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (ignored while typing; a focused checkbox -- e.g.
+  // the HEX switch right after a click -- must NOT swallow them)
   document.addEventListener("keydown", function (e) {
     if (UNMATCHED_SIDE) return;
-    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.target && (e.target.tagName === "TEXTAREA" ||
+        (e.target.tagName === "INPUT" && e.target.type !== "checkbox"))) return;
     if (e.key === "1") setMode("all");
     else if (e.key === "2") setMode("diff");
     else if (e.key === "3") setMode("same");
     else if (e.key === "4") setMode("ctx");
     else if (e.key === "m") document.getElementById("btnMinor").click();
+    else if (e.key === "h") setHex(!HEX);
     else if (e.key === "n") gotoSection(CUR + 1);
     else if (e.key === "p") gotoSection(CUR <= 0 ? 0 : CUR - 1);
   });
@@ -596,14 +751,16 @@
   // ==============================================================
   // File info bars
   // ==============================================================
-  function fillFileBar(id, path, meta) {
+  function fillFileBar(id, path, meta, isBin) {
     var el = document.getElementById(id);
     if (!path) { el.classList.add("fc-file-bar-empty"); el.innerHTML = '<span class="fb-name">(no file)</span>'; return; }
+    el.classList.remove("fc-file-bar-empty");
     var metaTxt = "";
     if (meta && meta.size !== null && meta.size !== undefined) {
       metaTxt = fmtSize(meta.size) + (meta.mtime ? " &middot; " + meta.mtime : "");
     }
     el.innerHTML = '<span class="fb-name">' + esc(baseName(path)) + "</span>" +
+                   (isBin ? '<span class="fb-bin" title="Binary file">BIN</span>' : "") +
                    '<span class="fb-dir">&#x200E;' + esc(dirName(path)) + "</span>" +
                    (metaTxt ? '<span class="fb-meta">' + metaTxt + "</span>" : "");
   }
@@ -619,73 +776,154 @@
   }
 
   // ==============================================================
-  // UNMATCHED single-file mode
+  // Data loading (shared by text and hex, pair and unmatched)
   // ==============================================================
-  function setupUnmatched() {
-    var btns = document.querySelectorAll(".fc-btn");
-    for (var i = 0; i < btns.length; i++) btns[i].classList.add("fc-btn-disabled");
-    document.getElementById("minimapBox").style.display = "none";
+  function showLoading(on, msg) {
+    var ov = document.getElementById("loadingOverlay");
+    ov.classList.toggle("hidden", !on);
+    if (on && msg) ov.querySelector("p").innerHTML = msg;
+  }
 
-    var filePath = UNMATCHED_SIDE === "left" ? LEFT_PATH : RIGHT_PATH;
-    var url = "/api/file-diff/?unmatched=" + encodeURIComponent(UNMATCHED_SIDE) +
-              (UNMATCHED_SIDE === "left" ? "&left=" : "&right=") + encodeURIComponent(filePath);
+  function diffUrl(hex) {
+    var url;
+    if (UNMATCHED_SIDE) {
+      var filePath = UNMATCHED_SIDE === "left" ? LEFT_PATH : RIGHT_PATH;
+      url = "/api/file-diff/?unmatched=" + encodeURIComponent(UNMATCHED_SIDE) +
+            (UNMATCHED_SIDE === "left" ? "&left=" : "&right=") + encodeURIComponent(filePath);
+    } else {
+      url = "/api/file-diff/?left=" + encodeURIComponent(LEFT_PATH) +
+            "&right=" + encodeURIComponent(RIGHT_PATH);
+    }
+    return url + (hex ? "&hex=1" : "");
+  }
 
-    fetch(url)
+  function loadView() {
+    var key = HEX ? "hex" : "text";
+    if (CACHE[key]) { applyData(CACHE[key]); return; }
+    showLoading(true, HEX ? "Reading binary data&hellip;" : "Computing aligned diff&hellip;");
+    fetch(diffUrl(HEX))
       .then(function (r) {
         if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || "Error " + r.status); });
         return r.json();
       })
       .then(function (data) {
-        document.getElementById("loadingOverlay").classList.add("hidden");
-        var lines = UNMATCHED_SIDE === "left" ? data.left_lines : data.right_lines;
-        var hl = highlightAll(lines, langOf(filePath));
-        var html = "";
-        for (var i = 0; i < lines.length; i++) {
-          html += '<div class="fcl t-unm"><span class="g">' + (i + 1) + '</span><span class="c">' + (hl[i] || " ") + "</span></div>";
-        }
-        var filePanel = UNMATCHED_SIDE === "left" ? panelLeft : panelRight;
-        var emptyPanel = UNMATCHED_SIDE === "left" ? panelRight : panelLeft;
-        filePanel.innerHTML = html;
-        emptyPanel.innerHTML = "";
-        emptyPanel.classList.add("fc-panel-empty-side");
-        fillFileBar(UNMATCHED_SIDE === "left" ? "fileBarLeft" : "fileBarRight", filePath, null);
-        fillFileBar(UNMATCHED_SIDE === "left" ? "fileBarRight" : "fileBarLeft", "", null);
-        document.getElementById("statChips").innerHTML =
-          '<span class="fc-chip"><span class="fc-dot fc-dot-del"></span>Unmatched file &mdash; ' + lines.length + " lines, no counterpart</span>";
-        document.title = baseName(filePath) + " (Unmatched) - File Compare";
+        CACHE[data.hex ? "hex" : "text"] = data;
+        applyData(data);
       })
-      .catch(function (err) { showError(err.message || "Failed to read file"); });
+      .catch(function (err) { showError(err.message || "Failed to compute diff"); });
+  }
+
+  function applyData(data) {
+    showLoading(false);
+    if (data.hex && !HEX) {
+      // The backend sniffed binary content and upgraded the payload:
+      // hex is not optional for this file, lock the switch.
+      HEX = true;
+      FORCE_HEX = true;
+    }
+    syncHexCtl();
+    document.body.classList.toggle("hexmode", HEX);
+    document.getElementById("keysHint").innerHTML = HEX
+      ? "1/2/3/4 views &middot; h hex &middot; n/p sections"
+      : "1/2/3/4 views &middot; m minor &middot; h hex &middot; n/p sections";
+
+    if (UNMATCHED_SIDE) { renderUnmatched(data); return; }
+
+    EXPANDED = {};
+    var bm = document.getElementById("btnMinor");
+    if (HEX) {
+      HEXDATA = data;
+      ROWS = data.rows || [];
+      HEXL = b64ToBytes(data.left_b64);
+      HEXR = b64ToBytes(data.right_b64);
+      MINOR = false;
+      bm.classList.remove("fc-on");
+      bm.classList.add("fc-btn-disabled");
+    } else {
+      DATA = data;
+      ROWS = data.rows || [];
+      LHL = highlightAll(data.left_lines || [], langOf(LEFT_PATH));
+      RHL = highlightAll(data.right_lines || [], langOf(RIGHT_PATH));
+      bm.classList.remove("fc-btn-disabled");
+      bm.classList.toggle("fc-on", MINOR);
+    }
+    fillFileBar("fileBarLeft", LEFT_PATH, data.left_meta, !!data.left_binary);
+    fillFileBar("fileBarRight", RIGHT_PATH, data.right_meta, !!data.right_binary);
+    computeSections();
+    render();
+    updateStatus();
+  }
+
+  // ==============================================================
+  // UNMATCHED single-file mode
+  // ==============================================================
+  function unmHexRow(bytes, k) {
+    var off = k * 16;
+    return '<div class="fcl t-unm"><span class="g">' + hex8(off) +
+           '</span><span class="c">' + hexCells(bytes, off, null, -1) + "</span></div>";
+  }
+
+  function renderUnmatched(data) {
+    var isLeft = UNMATCHED_SIDE === "left";
+    var filePath = isLeft ? LEFT_PATH : RIGHT_PATH;
+    var filePanel = isLeft ? panelLeft : panelRight;
+    var emptyPanel = isLeft ? panelRight : panelLeft;
+    var html = "", statTxt = "", isBin = false, meta = null;
+
+    if (data.hex) {
+      HEXDATA = data;
+      var bytes = b64ToBytes(isLeft ? data.left_b64 : data.right_b64);
+      var total = isLeft ? data.left_total : data.right_total;
+      var nrows = Math.ceil(bytes.length / 16);
+      for (var k = 0; k < nrows; k++) html += unmHexRow(bytes, k);
+      if (!nrows) {
+        html = '<div class="fcl t-unm"><span class="g"></span><span class="c" style="color:#999;font-style:italic;">(empty file)</span></div>';
+      }
+      if (data.truncated && data.truncated[UNMATCHED_SIDE]) {
+        html += '<div class="fcl t-sep t-trunc"><span class="g">&#8942;</span><span class="c">&#183;&#183;&#183;  hex view truncated &mdash; ' +
+                fmtSize(total - bytes.length) + " more not rendered  &#183;&#183;&#183;</span></div>";
+      }
+      isBin = isLeft ? !!data.left_binary : !!data.right_binary;
+      meta = isLeft ? data.left_meta : data.right_meta;
+      statTxt = "Unmatched " + (isBin ? "binary " : "") + "file &mdash; " + fmtSize(total) + ", no counterpart";
+    } else {
+      var lines = isLeft ? data.left_lines : data.right_lines;
+      var hl = highlightAll(lines, langOf(filePath));
+      for (var i = 0; i < lines.length; i++) {
+        html += '<div class="fcl t-unm"><span class="g">' + (i + 1) + '</span><span class="c">' + (hl[i] || " ") + "</span></div>";
+      }
+      statTxt = "Unmatched file &mdash; " + lines.length + " lines, no counterpart";
+    }
+
+    filePanel.innerHTML = html;
+    emptyPanel.innerHTML = "";
+    emptyPanel.classList.add("fc-panel-empty-side");
+    fillFileBar(isLeft ? "fileBarLeft" : "fileBarRight", filePath, meta, isBin);
+    fillFileBar(isLeft ? "fileBarRight" : "fileBarLeft", "", null, false);
+    document.getElementById("statChips").innerHTML =
+      '<span class="fc-chip"><span class="fc-dot fc-dot-del"></span>' + statTxt + "</span>";
+    document.title = baseName(filePath) + " (Unmatched) - File Compare";
+  }
+
+  function setupUnmatched() {
+    var btns = document.querySelectorAll(".fc-btn");
+    for (var i = 0; i < btns.length; i++) btns[i].classList.add("fc-btn-disabled");
+    document.getElementById("minimapBox").style.display = "none";
+    loadView();   // the HEX switch stays live: hexdump works on one file too
   }
 
   // ==============================================================
   // Init
   // ==============================================================
   function init() {
+    syncHexCtl();
     if (UNMATCHED_SIDE) { setupUnmatched(); return; }
     if (!LEFT_PATH || !RIGHT_PATH) {
       showError("Missing file paths. Please open this page from the comparison results.");
       return;
     }
     document.title = baseName(LEFT_PATH) + " ↔ " + baseName(RIGHT_PATH) + " - File Compare";
-
-    fetch("/api/file-diff/?left=" + encodeURIComponent(LEFT_PATH) + "&right=" + encodeURIComponent(RIGHT_PATH))
-      .then(function (r) {
-        if (!r.ok) return r.json().then(function (d) { throw new Error(d.error || "Error " + r.status); });
-        return r.json();
-      })
-      .then(function (data) {
-        DATA = data;
-        ROWS = data.rows || [];
-        LHL = highlightAll(data.left_lines || [], langOf(LEFT_PATH));
-        RHL = highlightAll(data.right_lines || [], langOf(RIGHT_PATH));
-        document.getElementById("loadingOverlay").classList.add("hidden");
-        fillFileBar("fileBarLeft", LEFT_PATH, data.left_meta);
-        fillFileBar("fileBarRight", RIGHT_PATH, data.right_meta);
-        computeSections();
-        render();
-        updateStatus();
-      })
-      .catch(function (err) { showError(err.message || "Failed to compute diff"); });
+    loadView();
   }
 
   init();

@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Workspace Comparator v1.2.0</title>
+  <title>Workspace Comparator v1.3.0</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { font-size: 14px; }
@@ -51,7 +51,7 @@
     .stats-bar { display: flex; flex-wrap: wrap; gap: 1.2rem; padding: 0.6rem 1.5rem; background: #e8ecf1; font-size: 0.82rem; color: #444; border-bottom: 1px solid #d0d5dd; }
     .stats-bar span { display: inline-flex; align-items: center; gap: 0.3rem; }
     .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-weight: 600; font-size: 0.78rem; color: #fff; }
-    .badge-blue { background: #4361ee; } .badge-green { background: #2ecc71; } .badge-orange { background: #e67e22; } .badge-purple { background: #9b59b6; } .badge-gray { background: #95a5a6; }
+    .badge-blue { background: #4361ee; } .badge-green { background: #2ecc71; } .badge-orange { background: #e67e22; } .badge-purple { background: #9b59b6; } .badge-gray { background: #95a5a6; } .badge-teal { background: #0e9488; }
 
     .results-section { padding: 0.8rem 1rem 2rem; }
     .comparison-panel-wrapper { overflow-x: auto; border: 1px solid #cdd4dd; border-radius: 10px; background: #fff; box-shadow: 0 4px 18px rgba(27,58,92,0.10); }
@@ -87,6 +87,7 @@
     .status-different { background: #e74c3c; box-shadow: 0 1px 3px rgba(231,76,60,0.4); }
     .match-method { display: block; font-size: 0.62rem; color: #888; margin-top: 2px; }
     .no-match-indicator { color: #ccc; font-size: 0.9rem; }
+    .bin-tag { display: block; width: fit-content; margin: 2px auto 0; padding: 0 6px; border-radius: 4px; background: linear-gradient(180deg, #17b3a6, #0e9488); color: #fff; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.8px; font-family: "Segoe UI", Tahoma, sans-serif; line-height: 1.5; box-shadow: 0 1px 3px rgba(14,148,136,0.5); }
 
     .empty-state { text-align: center; padding: 4rem 2rem; color: #888; }
     .empty-icon { font-size: 3rem; margin-bottom: 0.8rem; }
@@ -173,7 +174,7 @@
 <body>
 
   <header class="app-header">
-    <h1>Workspace Comparator <span class="app-ver">v1.2.0</span></h1>
+    <h1>Workspace Comparator <span class="app-ver">v1.3.0</span></h1>
     <p class="subtitle">Intelligent source-code file correspondence engine</p>
   </header>
 
@@ -216,7 +217,7 @@
   </div>
 
   <section id="statsBar" class="stats-bar hidden">
-    <span id="statTotal"></span><span id="statExact"></span><span id="statDet"></span><span id="statLLM"></span><span id="statCalls"></span>
+    <span id="statTotal"></span><span id="statExact"></span><span id="statDet"></span><span id="statBin"></span><span id="statLLM"></span><span id="statCalls"></span>
   </section>
 
   <section id="resultsSection" class="results-section hidden">
@@ -867,6 +868,7 @@
       document.getElementById("statTotal").innerHTML = 'Files: <span class="badge badge-blue">' + stats.total_left + ' L</span> / <span class="badge badge-blue">' + stats.total_right + ' R</span>';
       document.getElementById("statExact").innerHTML = 'Exact: <span class="badge badge-green">' + stats.exact_path_matches + '</span>';
       document.getElementById("statDet").innerHTML = 'Deterministic: <span class="badge badge-orange">' + stats.deterministic_matches + '</span>';
+      document.getElementById("statBin").innerHTML = 'Binary: <span class="badge badge-teal">' + (stats.binary_matches || 0) + '</span>';
       document.getElementById("statLLM").innerHTML = 'LLM: <span class="badge badge-purple">' + stats.llm_matches + '</span>';
       document.getElementById("statCalls").innerHTML = 'LLM calls: <span class="badge badge-gray">' + stats.llm_calls + '</span>';
       document.getElementById("statsBar").classList.remove("hidden");
@@ -885,11 +887,13 @@
         else if (cs === "minor") { sym = "~="; symClass = "status-minor"; }
         else { sym = "!="; symClass = "status-different"; }
         var methodLabel = m.match_type === "llm_verified" ? '<span class="match-method">AI-Matched</span>' :
-                          m.match_type === "content" ? '<span class="match-method">Renamed</span>' : '';
+                          m.match_type === "content" ? '<span class="match-method">Renamed</span>' :
+                          m.match_type === "binary" ? '<span class="match-method">Moved</span>' : '';
+        var binTag = m.binary ? '<span class="bin-tag" title="Binary file — compared byte-for-byte, opens in the hex viewer">BIN</span>' : '';
         html += '<tr class="row-matched" title="Double-click to compare files" data-left-path="' + escAttr(m.left.full_path) + '" data-right-path="' + escAttr(m.right.full_path) + '">' +
           '<td class="cell-left">' + esc(m.left.name) + '</td>' +
           '<td class="cell-left">' + esc(m.left.directory || ".") + '</td>' +
-          '<td class="match-cell"><span class="status-sym ' + symClass + '">' + sym + '</span>' + methodLabel + '</td>' +
+          '<td class="match-cell"><span class="status-sym ' + symClass + '">' + sym + '</span>' + binTag + methodLabel + '</td>' +
           '<td class="cell-right">' + esc(m.right.name) + '</td>' +
           '<td class="cell-right">' + esc(m.right.directory || ".") + '</td></tr>';
       }
@@ -897,11 +901,12 @@
 
     if (unmL.length > 0 || unmR.length > 0) {
       html += sepRow("Unmatched Files (" + (unmL.length + unmR.length) + ")");
+      var unmBinTag = '<span class="bin-tag" title="Binary file — opens in the hex viewer">BIN</span>';
       for (var j = 0; j < unmL.length; j++) {
-        html += '<tr class="row-unmatched" data-left-path="' + escAttr(unmL[j].full_path) + '" data-unmatched-side="left" title="Double-click to view file"><td class="cell-left-filled">' + esc(unmL[j].name) + '</td><td class="cell-left-filled">' + esc(unmL[j].directory || ".") + '</td><td class="match-cell"><span class="no-match-indicator">--</span></td><td class="cell-empty"></td><td class="cell-empty"></td></tr>';
+        html += '<tr class="row-unmatched" data-left-path="' + escAttr(unmL[j].full_path) + '" data-unmatched-side="left" title="Double-click to view file"><td class="cell-left-filled">' + esc(unmL[j].name) + '</td><td class="cell-left-filled">' + esc(unmL[j].directory || ".") + '</td><td class="match-cell"><span class="no-match-indicator">--</span>' + (unmL[j].binary ? unmBinTag : '') + '</td><td class="cell-empty"></td><td class="cell-empty"></td></tr>';
       }
       for (var k = 0; k < unmR.length; k++) {
-        html += '<tr class="row-unmatched" data-right-path="' + escAttr(unmR[k].full_path) + '" data-unmatched-side="right" title="Double-click to view file"><td class="cell-empty"></td><td class="cell-empty"></td><td class="match-cell"><span class="no-match-indicator">--</span></td><td class="cell-right-filled">' + esc(unmR[k].name) + '</td><td class="cell-right-filled">' + esc(unmR[k].directory || ".") + '</td></tr>';
+        html += '<tr class="row-unmatched" data-right-path="' + escAttr(unmR[k].full_path) + '" data-unmatched-side="right" title="Double-click to view file"><td class="cell-empty"></td><td class="cell-empty"></td><td class="match-cell"><span class="no-match-indicator">--</span>' + (unmR[k].binary ? unmBinTag : '') + '</td><td class="cell-right-filled">' + esc(unmR[k].name) + '</td><td class="cell-right-filled">' + esc(unmR[k].directory || ".") + '</td></tr>';
       }
     }
 

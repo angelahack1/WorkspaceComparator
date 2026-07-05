@@ -16,8 +16,9 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from .services.binary_detect import is_binary_file
 from .services.correspondence import find_correspondences
-from .services.file_diff import compute_file_diff
+from .services.file_diff import compute_file_diff, compute_hex_diff, compute_hex_single
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ def compare(request):
                 'match_type': m.match_type,
                 'similarity': m.similarity,
                 'content_status': m.content_status,
+                'binary': m.left_file.is_binary or m.right_file.is_binary,
             }
             for m in result.matched
         ],
@@ -145,14 +147,33 @@ def browse(request):
 
 @require_GET
 def file_compare(request):
-    """Render the file comparison page."""
+    """Render the file comparison page.
+
+    `force_hex` tells the template a binary file is involved: the HEX
+    switch renders checked AND locked (a binary can never be viewed as
+    text).  For text files it stays unlocked so the user may opt into
+    the hex view.
+    """
     left_path = request.GET.get('left', '').strip()
     right_path = request.GET.get('right', '').strip()
     unmatched_side = request.GET.get('unmatched', '').strip()
+
+    force_hex = False
+    try:
+        if unmatched_side in ('left', 'right'):
+            p = left_path if unmatched_side == 'left' else right_path
+            force_hex = bool(p) and os.path.isfile(p) and is_binary_file(p)
+        elif left_path and right_path \
+                and os.path.isfile(left_path) and os.path.isfile(right_path):
+            force_hex = is_binary_file(left_path) or is_binary_file(right_path)
+    except OSError:
+        force_hex = False
+
     response = render(request, 'comparator/file_compare.html', {
         'left_path': left_path,
         'right_path': right_path,
         'unmatched_side': unmatched_side,
+        'force_hex': '1' if force_hex else '',
     })
     response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response['Pragma'] = 'no-cache'
@@ -166,11 +187,15 @@ def file_diff(request):
     GET /api/file-diff/?left=<path>&right=<path>
     GET /api/file-diff/?left=<path>&unmatched=left   (single-file mode)
     GET /api/file-diff/?right=<path>&unmatched=right  (single-file mode)
-    Returns JSON with line-level diff data.
+    Optional &hex=1 requests the hexdump-style byte comparison payload.
+    Binary files are ALWAYS answered with the hex payload, requested or
+    not -- their bytes must never be squeezed through the text pipeline.
+    Returns JSON with line-level diff data (or the hex row model).
     """
     left_path = request.GET.get('left', '').strip()
     right_path = request.GET.get('right', '').strip()
     unmatched_side = request.GET.get('unmatched', '').strip()
+    want_hex = request.GET.get('hex', '').strip() == '1'
 
     # Single-file mode for unmatched files
     if unmatched_side in ('left', 'right'):
@@ -185,6 +210,34 @@ def file_diff(request):
                 {'error': f'File not found: {file_path}'},
                 status=400,
             )
+        if want_hex or is_binary_file(file_path):
+            try:
+                d = compute_hex_single(file_path)
+            except Exception as exc:
+                logger.exception("Hex read failed: %s", exc)
+                return JsonResponse(
+                    {'error': f'Failed to read file: {exc}'},
+                    status=500,
+                )
+            is_left = unmatched_side == 'left'
+            return JsonResponse({
+                'hex': True,
+                'unmatched': unmatched_side,
+                'left_b64': d['b64'] if is_left else '',
+                'right_b64': '' if is_left else d['b64'],
+                'left_meta': d['meta'] if is_left else None,
+                'right_meta': None if is_left else d['meta'],
+                'left_binary': d['binary'] if is_left else False,
+                'right_binary': False if is_left else d['binary'],
+                'truncated': {
+                    'left': d['truncated'] if is_left else False,
+                    'right': False if is_left else d['truncated'],
+                },
+                'left_total': d['total'] if is_left else 0,
+                'right_total': 0 if is_left else d['total'],
+                'left_path': left_path,
+                'right_path': right_path,
+            })
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.read().splitlines()
@@ -218,7 +271,10 @@ def file_diff(request):
             )
 
     try:
-        result = compute_file_diff(left_path, right_path)
+        if want_hex or is_binary_file(left_path) or is_binary_file(right_path):
+            result = compute_hex_diff(left_path, right_path)
+        else:
+            result = compute_file_diff(left_path, right_path)
     except Exception as exc:
         logger.exception("File diff failed: %s", exc)
         return JsonResponse(

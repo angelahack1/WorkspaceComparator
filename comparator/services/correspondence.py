@@ -12,28 +12,41 @@ File Correspondence Engine
 Core orchestration module.  Given two directory paths, it:
 
   Phase 1 -- Matches files with identical filename AND relative directory
-             (highest confidence: exact path match).
+             (highest confidence: exact path match).  Binary pairs are
+             compared byte-for-byte for their content status.
 
-  Phase 2 -- For remaining files with the SAME filename but different
-             directories, runs the deterministic-similarity-comparison
-             algorithm.  If the deterministic result is confident
-             (>85 %) the match is accepted; otherwise the LLM is
-             consulted as arbiter.
+  Phase 2-BIN -- Binary files (is_binary flag from the scanner) with
+             the SAME filename in different directories.  Binary bytes
+             are opaque to text similarity and meaningless to an LLM,
+             so the exact filename is the only key; the directory path
+             is the tie-break clue among several candidates, and byte
+             identity trumps everything.  The LLM is NEVER consulted
+             for binary files.
 
-  Phase 3 -- For still-unmatched files whose filenames are *similar*
-             (Levenshtein ratio > 0.7) and share the same extension,
-             the same deterministic -> LLM pipeline is applied.
+  Phase 2 -- For remaining TEXT files with the SAME filename but
+             different directories, runs the deterministic-similarity
+             comparison algorithm.  If the deterministic result is
+             confident (>85 %) the match is accepted; otherwise the
+             LLM is consulted as arbiter.
+
+  Phase 3 -- For still-unmatched text files whose filenames are
+             *similar* (Levenshtein ratio > 0.7) and share the same
+             extension, the same deterministic -> LLM pipeline is
+             applied.  Binary files never enter Phases 3/3b: a renamed
+             binary is undecidable, so it stays unmatched.
 
   Phase 4 -- Everything left over is reported as unmatched.
 
 Matched files are returned sorted alphabetically; unmatched files are
 returned separately for each side, also sorted alphabetically.
 """
+import difflib
 import logging
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
+from .binary_detect import binary_similarity, bytes_equal
 from .file_scanner import FileInfo, normalize_exclusions, scan_directory
 from .deterministic import compute_filename_similarity, compute_similarity, compute_content_status
 from .llm_comparator import compare_with_llm, is_ollama_available
@@ -88,7 +101,7 @@ def resolve_settings(settings: Optional[Dict] = None) -> Dict:
 class MatchResult:
     left_file: FileInfo
     right_file: FileInfo
-    match_type: str   # exact_path | deterministic | llm_verified | content
+    match_type: str   # exact_path | binary | deterministic | llm_verified | content
     similarity: float
     content_status: str = 'different'  # identical | minor | different
 
@@ -126,6 +139,23 @@ def _content_status(left: FileInfo, right: FileInfo, read=_read_file) -> str:
     return compute_content_status(c1, c2, left.extension)
 
 
+def _binary_status(left: FileInfo, right: FileInfo) -> str:
+    """Content status for binary pairs: bytes either match or they don't.
+
+    There is no 'minor' for binaries -- whitespace/comment normalization
+    has no meaning in a byte stream.
+    """
+    return 'identical' if bytes_equal(left.full_path, right.full_path) else 'different'
+
+
+def _dir_similarity(a: str, b: str) -> float:
+    """0-1 similarity between two relative directory paths (the Phase
+    2-BIN tie-break clue)."""
+    if a == b:
+        return 1.0
+    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
 def _run_deterministic(left: FileInfo, right: FileInfo, read=_read_file) -> Tuple[float, str]:
     c1 = read(left.full_path)
     c2 = read(right.full_path)
@@ -158,10 +188,18 @@ class _LLMGate:
     def score(self, left: FileInfo, right: FileInfo) -> int:
         if not self.enabled:
             return -1
+        content_left = self.read(left.full_path)
+        content_right = self.read(right.full_path)
+        if '\x00' in content_left or '\x00' in content_right:
+            # Binary content that slipped past extension detection (the
+            # latin-1 fallback decodes anything, NULs included) must
+            # never reach the LLM -- behave like an unavailable backend
+            # without charging the circuit breaker.
+            return -1
         self.stats['llm_calls'] += 1
         pct = compare_with_llm(
-            left.filename, self.read(left.full_path),
-            right.filename, self.read(right.full_path),
+            left.filename, content_left,
+            right.filename, content_right,
         )
         if pct == -1:
             self.failures += 1
@@ -210,6 +248,7 @@ def find_correspondences(
         'total_right': len(right_files),
         'exact_path_matches': 0,
         'deterministic_matches': 0,
+        'binary_matches': 0,
         'llm_matches': 0,
         'llm_calls': 0,
         'settings': cfg,
@@ -247,7 +286,11 @@ def find_correspondences(
                 continue
             rf = right_files[ri]
             if rf.relative_dir == lf.relative_dir:
-                status = _content_status(lf, rf, read)
+                if lf.is_binary or rf.is_binary:
+                    status = _binary_status(lf, rf)
+                    result.stats['binary_matches'] += 1
+                else:
+                    status = _content_status(lf, rf, read)
                 result.matched.append(MatchResult(
                     left_file=lf,
                     right_file=rf,
@@ -261,10 +304,59 @@ def find_correspondences(
                 break
 
     # ------------------------------------------------------------------
-    # PHASE 2 -- same filename, different directory
+    # PHASE 2-BIN -- binary files: same filename, different directory
+    # ------------------------------------------------------------------
+    # Binary content is opaque to the text pipeline and meaningless to
+    # the LLM, so the EXACT filename is the only reliable key; the
+    # directory path is the tie-break clue among several same-named
+    # candidates, and byte identity trumps everything.  Runs BEFORE the
+    # text Phase 2 so no binary file can ever reach text scoring or LLM
+    # arbitration.
+    for li in list(free_left):
+        lf = left_files[li]
+        if not lf.is_binary:
+            continue
+        candidates = [
+            ri for ri in right_by_name.get(lf.filename, [])
+            if ri in free_right and right_files[ri].is_binary
+        ]
+        if not candidates:
+            continue
+
+        best_ri: Optional[int] = None
+        best_key: Optional[Tuple[int, float]] = None
+        best_identical = False
+        for ri in candidates:
+            rf = right_files[ri]
+            identical = bytes_equal(lf.full_path, rf.full_path)
+            key = (1 if identical else 0,
+                   _dir_similarity(lf.relative_dir, rf.relative_dir))
+            if best_key is None or key > best_key:
+                best_ri, best_key, best_identical = ri, key, identical
+
+        rf = right_files[best_ri]
+        sim = 100.0 if best_identical else binary_similarity(lf.full_path, rf.full_path)
+        logger.info(
+            "Phase2-BIN %s <-> %s : %s (dir clue %.2f, est. sim %.1f%%)",
+            lf.relative_path, rf.relative_path,
+            'identical' if best_identical else 'different',
+            best_key[1], sim,
+        )
+        result.matched.append(MatchResult(
+            lf, rf, 'binary', sim,
+            content_status='identical' if best_identical else 'different',
+        ))
+        free_left.discard(li)
+        free_right.discard(best_ri)
+        result.stats['binary_matches'] += 1
+
+    # ------------------------------------------------------------------
+    # PHASE 2 -- same filename, different directory (text files)
     # ------------------------------------------------------------------
     for li in list(free_left):
         lf = left_files[li]
+        if lf.is_binary:
+            continue  # binaries were handled in Phase 2-BIN or stay unmatched
         candidates = [
             ri for ri in right_by_name.get(lf.filename, [])
             if ri in free_right
@@ -338,8 +430,13 @@ def find_correspondences(
     # ------------------------------------------------------------------
     # PHASE 3 -- similar filename (not exact), compatible extension
     # ------------------------------------------------------------------
+    # Text files only: a *renamed* binary is undecidable (no readable
+    # content, no LLM), so binaries require the exact filename and
+    # anything else stays unmatched.
     for li in list(free_left):
         lf = left_files[li]
+        if lf.is_binary:
+            continue
         best: Optional[MatchResult] = None
         best_combined = 0.0
         best_ri: Optional[int] = None
@@ -349,6 +446,8 @@ def find_correspondences(
         cands: List[Tuple[float, float, float, str, int]] = []
         for ri in list(free_right):
             rf = right_files[ri]
+            if rf.is_binary:
+                continue
 
             # Extensions must match
             if lf.extension != rf.extension:
@@ -423,6 +522,8 @@ def find_correspondences(
     # (a rename candidate can't be several times larger or smaller).
     for li in list(free_left):
         lf = left_files[li]
+        if lf.is_binary:
+            continue  # renamed binaries are undecidable -- never content-swept
         l_len = len(read(lf.full_path))
         if l_len == 0:
             continue  # empty/unreadable: content carries no signal
@@ -433,6 +534,8 @@ def find_correspondences(
 
         for ri in list(free_right):
             rf = right_files[ri]
+            if rf.is_binary:
+                continue
             if lf.extension != rf.extension:
                 continue
             r_len = len(read(rf.full_path))

@@ -6,7 +6,7 @@ Guidance for Claude Code (and humans) working in this repository. Read this befo
 
 ## 1. What this project is
 
-**Current version: 1.2.0** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles and the `index.html` header carry the same number by hand (see §10 "Bump the app version").
+**Current version: 1.3.0** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles and the `index.html` header carry the same number by hand (see §10 "Bump the app version").
 
 **Workspace Comparator** is a **local, single-user Django web tool** that compares two source-code project directories ("left" and "right") and works out which files *correspond* to each other — even when the projects have been restructured, renamed, or migrated between build systems (e.g. a plain Java workspace vs. its Maven-ified successor).
 
@@ -20,6 +20,8 @@ The canonical example baked into the tests is comparing:
 
 1. **Directory comparison** (`/`) — pick two folders, get a BeyondCompare-style two-panel table: matched files in the middle-joined green rows, unmatched files in red rows. Each matched row shows a **content-status pill** (`==` identical, `~=` minor, `!=` different) and, for AI-matched pairs, an "AI-Matched" label.
 2. **File comparison** (`/file-compare/`) — double-click any row to open a full **Beyond Compare 5-style** side-by-side diff viewer: *content-aligned* rows (corresponding lines face each other even when line numbers drift, with diagonal-hatched gap placeholders), word-level intra-line change highlighting, a collapsible **Context** view, an overview **minimap**, section navigation, syntax coloring, and a single-file view for unmatched files. The visual/behavioral reference is `BeyondCompareCoolComparission.jpg` in the repo root.
+
+Since **v1.3.0** both screens are **binary-aware**: files with binary extensions (images, jars, keystores… `BINARY_EXTENSIONS` in `services/binary_detect.py`) are scanned too, matched **only by exact filename** (directory path as tie-break clue, byte identity trumps, the **LLM is never consulted for binaries**), tagged **BIN** in the results table, and opened in a colored **`hexdump -C`-style hex viewer** instead of the text diff. The viewer's toolbar has a **HEX switch**: free to toggle on text files, **checked and locked** whenever a binary file is involved (a binary can never be viewed as text).
 
 ### It is NOT
 - Not multi-user, not authenticated, not deployed to production. `DEBUG=True`, `ALLOWED_HOSTS=['*']`, a hard-coded insecure `SECRET_KEY`, and `@csrf_exempt` on the compare endpoint all confirm this is a **localhost developer utility**. Do not treat it as internet-facing.
@@ -65,11 +67,12 @@ WorkspaceComparator/
 │   ├── urls.py                   # 5 routes (see §5)
 │   ├── views.py                  # Thin HTTP layer over services/
 │   ├── services/                 # ★ ALL THE REAL LOGIC LIVES HERE ★
-│   │   ├── correspondence.py     #   Orchestrator: the 4-phase matching engine
-│   │   ├── file_scanner.py       #   Recursive source-file discovery
+│   │   ├── correspondence.py     #   Orchestrator: the phased matching engine
+│   │   ├── file_scanner.py       #   Recursive source+binary file discovery
+│   │   ├── binary_detect.py      #   Binary detection + byte-level helpers (v1.3.0)
 │   │   ├── deterministic.py      #   Language-aware similarity scoring
 │   │   ├── llm_comparator.py     #   Ollama fallback arbiter
-│   │   └── file_diff.py          #   ★ Aligned-diff engine (BC-style row model, see §4b/§5) ★
+│   │   └── file_diff.py          #   ★ Aligned-diff engine + hex diff engine (see §4b/§5) ★
 │   ├── templates/comparator/
 │   │   ├── index.html            # ★ Main page — SELF-CONTAINED (inline CSS+JS) ★
 │   │   └── file_compare.html     # ★ BC-style diff viewer — SELF-CONTAINED (inline CSS+JS) ★
@@ -77,11 +80,14 @@ WorkspaceComparator/
 │       ├── css/styles.css
 │       └── js/app.js
 │
+├── launcher.py                   # PyInstaller entry point (standalone exe, port 9000)
+├── build.py                      # One-file exe build + smoke test
+├── demo/                         # Bundled demo migration (InvoicerClassic ↔ InvoicerMaven,
+│                                 #   incl. a binary pair: app-icon.png / branding/logo.png)
+├── docs/screenshots/             # README screenshots
 ├── test_browser.py               # Headless Playwright smoke test (port 9876)
 ├── AutomatedTestsStarter.py      # Visible Playwright full test (port 9877, slow-mo)
-├── test_screenshots/             # Output PNGs from the test scripts (committed artifacts)
-├── BeyondCompareCoolComparission.jpg  # Design reference: the BC 5 look the diff viewer imitates
-└── .claude/settings.local.json   # Pre-approved Bash permissions
+└── test_screenshots/             # Output PNGs from the test scripts (gitignored)
 ```
 
 **Mental model:** `views.py` is a thin adapter. The interesting engineering is entirely in `comparator/services/`. When asked to change *behavior* (matching, scoring, diffing), you almost always edit `services/`, not views or templates.
@@ -93,18 +99,19 @@ WorkspaceComparator/
 This is the heart of the app. Entry point: `comparator/services/correspondence.py :: find_correspondences(left_dir, right_dir)`.
 
 ### Step 0 — Scan (`file_scanner.py`)
-`scan_directory()` walks each tree with `os.walk`, keeping only files whose extension is in `SOURCE_EXTENSIONS` (C family, Java, Rust, C#, Go, Kotlin/Scala, Swift/Obj-C, Python, JS/TS, plus config: `.gradle .xml .properties .yaml .yml .toml`). It **prunes** noise dirs (`SKIP_DIRS`: `node_modules`, `.git`, `target`, `build`, `dist`, `bin`, `obj`, `.idea`, `.vscode`, plus Python environments `site-packages`/`venv`/`env`/`envs`/`virtualenv` — an embedded runtime brings thousands of third-party `__init__.py` files that explode Phase 2) and any dotfile dir. `scan_directory(root, exclusions=None)` also accepts **user exclusions** (`{'files': [...], 'dirs': [...]}` fnmatch wildcards from the UI's 🚫 Exclusions dialog): matching directories are pruned from the walk (contents never scanned), matching files skipped; patterns containing `/` match the forward-slash relative path, plain patterns match the basename anywhere. Each hit becomes a `FileInfo(filename, relative_dir, full_path, extension)`. Relative dirs are normalized to forward slashes; root-level dir is `''`.
+`scan_directory()` walks each tree with `os.walk`, keeping files whose extension is in `SOURCE_EXTENSIONS` (C family, Java, Rust, C#, Go, Kotlin/Scala, Swift/Obj-C, Python, JS/TS, plus config: `.gradle .xml .properties .yaml .yml .toml`) **or** in `BINARY_EXTENSIONS` (`binary_detect.py`: images, archives/jars, compiled artifacts, fonts, keystores, media…) — the latter get `FileInfo.is_binary=True` and are routed to byte-level matching, never the text/LLM pipeline. It **prunes** noise dirs (`SKIP_DIRS`: `node_modules`, `.git`, `target`, `build`, `dist`, `bin`, `obj`, `.idea`, `.vscode`, plus Python environments `site-packages`/`venv`/`env`/`envs`/`virtualenv` — an embedded runtime brings thousands of third-party `__init__.py` files that explode Phase 2) and any dotfile dir. `scan_directory(root, exclusions=None)` also accepts **user exclusions** (`{'files': [...], 'dirs': [...]}` fnmatch wildcards from the UI's 🚫 Exclusions dialog): matching directories are pruned from the walk (contents never scanned), matching files skipped; patterns containing `/` match the forward-slash relative path, plain patterns match the basename anywhere. Each hit becomes a `FileInfo(filename, relative_dir, full_path, extension)`. Relative dirs are normalized to forward slashes; root-level dir is `''`.
 
 ### The 4 phases
 Matching is **greedy and order-dependent**. Files start "free"; once matched, both sides are removed from the free pool. Phases run in sequence, each consuming from what the previous left behind:
 
-- **Phase 1 — Exact path match.** Same filename **and** same `relative_dir`. Instant match, `similarity=100`, `match_type='exact_path'`. Highest confidence.
-- **Phase 2 — Same filename, different directory.** For each remaining left file, *all* right files with the same filename are scored deterministically first (sorted best-first). If any has `confidence=='high'` and `similarity > 85` → accept as `deterministic`, no LLM. Otherwise **ask the LLM** for at most the top `MAX_LLM_PER_FILE` (3) candidates whose deterministic sim clears the `LLM_MIN_SIM` (15) noise floor; a score `>= 70` → accept as `llm_verified`. If the LLM is unreachable (returns `-1`) but deterministic `> 40`, fall back to accepting as `deterministic`. The bound matters: without it, boilerplate names (`__init__.py`, `index.js`) with hundreds of same-named candidates trigger one LLM round-trip *each* and a compare never finishes.
+- **Phase 1 — Exact path match.** Same filename **and** same `relative_dir`. Instant match, `similarity=100`, `match_type='exact_path'`. Highest confidence. Binary pairs get their content status from **byte equality** (`_binary_status`: `identical`/`different`, never `minor`) instead of text normalization.
+- **Phase 2-BIN — Binary files, same filename, different directory.** Runs BEFORE the text Phase 2 so binaries can never leak into text scoring or LLM arbitration. Binary bytes are opaque to the LLM ("no way to tell the differences with an LLM"), so the **exact filename is the only key**; among several same-named candidates the ranking is `(byte-identical, directory-path similarity)` — identity trumps, then the closest `relative_dir` (SequenceMatcher) wins. Match is `match_type='binary'` (UI labels it *Moved*), similarity = 100 when identical else `binary_similarity()`'s chunk-level estimate (display-only), counted in `stats['binary_matches']`. Binaries with **no same-named counterpart stay unmatched** — Phases 3/3b skip them entirely (a renamed binary is undecidable).
+- **Phase 2 — Same filename, different directory (text).** For each remaining left file, *all* right files with the same filename are scored deterministically first (sorted best-first). If any has `confidence=='high'` and `similarity > 85` → accept as `deterministic`, no LLM. Otherwise **ask the LLM** for at most the top `MAX_LLM_PER_FILE` (3) candidates whose deterministic sim clears the `LLM_MIN_SIM` (15) noise floor; a score `>= 70` → accept as `llm_verified`. If the LLM is unreachable (returns `-1`) but deterministic `> 40`, fall back to accepting as `deterministic`. The bound matters: without it, boilerplate names (`__init__.py`, `index.js`) with hundreds of same-named candidates trigger one LLM round-trip *each* and a compare never finishes.
 - **Phase 3 — Similar filename (fuzzy), same extension.** For still-unmatched files, compare filenames with `compute_filename_similarity` (SequenceMatcher on the base name). Require `>= 0.70` similarity and matching extension. Score = `filename_sim*30 + content_sim*0.70` (a blended heuristic). Candidates are collected and sorted by combined score first; a high-confidence deterministic candidate auto-accepts, else medium/low candidates with filename sim `> 0.80` escalate to the LLM under the same `MAX_LLM_PER_FILE` / `LLM_MIN_SIM` bounds.
 - **Phase 3b — Renamed files (content-only).** Leftovers whose filenames are too different for Phase 3 are swept purely by content: same extension + deterministic similarity `>= CONTENT_SIM_THRESHOLD` (60) → match with `match_type='content'` (the UI labels these rows "Renamed"). A cheap length-ratio bound prunes the O(L·R) sweep before any expensive comparison. No LLM involvement.
 - **Phase 4 — Leftovers.** Everything still free is reported as `unmatched_left` / `unmatched_right`.
 
-Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, and a `stats` dict (`total_left/right`, `exact_path_matches`, `deterministic_matches`, `llm_matches`, `llm_calls`). Sorting anchors on the **left side** (the user's original project): primary key = left filename, secondary key = left directory — the right file follows its partner even when its own name is completely different. Unmatched lists sort by (filename, directory) on their own side.
+Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, and a `stats` dict (`total_left/right`, `exact_path_matches`, `deterministic_matches`, `binary_matches`, `llm_matches`, `llm_calls`). Sorting anchors on the **left side** (the user's original project): primary key = left filename, secondary key = left directory — the right file follows its partner even when its own name is completely different. Unmatched lists sort by (filename, directory) on their own side.
 
 ### Tunable thresholds (top of `correspondence.py`)
 ```python
@@ -137,6 +144,7 @@ Only invoked for genuinely ambiguous Phase 2/3 cases (to keep latency down). `co
 
 - Files are truncated to `MAX_FILE_CHARS = 6000` via `_smart_truncate` (keeps 40% head / 35% middle / 25% tail with `/* ... truncated ... */` markers) so headers, core logic, and closings all survive.
 - Returns **`-1`** on any failure (connection refused, timeout, non-numeric answer). Callers treat `-1` as "LLM unavailable" and fall back to deterministic scoring. **The app degrades gracefully with no Ollama running** — you just lose the AI-arbitrated matches.
+- **Binary lock-out**: binaries never reach the arbiter by construction (Phase 2-BIN consumes them first), and `_LLMGate.score` additionally refuses any content containing a NUL (`\x00`) — binary bytes that sneak past extension detection inside a text-extension file (the latin-1 fallback decodes anything) short-circuit to `-1` without charging the breaker or `llm_calls`.
 - **Circuit breaker** (`_LLMGate` in `correspondence.py`, `LLM_FAILURE_LIMIT = 3`): all Phase 2/3 LLM escalations go through the gate. It probes `is_ollama_available()` once per run, and after 3 *consecutive* `-1` results it disables LLM arbitration for the rest of the run (short-circuiting to `-1`), so a broken backend can no longer turn a large comparison into hundreds of doomed 120 s calls that never finish. A success resets the failure counter. `stats['llm_calls']` counts only real HTTP attempts.
 - The prompt begins with `/no_think` (a directive for thinking-capable models to skip visible reasoning).
 
@@ -169,6 +177,20 @@ MAX_PAIR_AREA  = 2500   # L*R above this -> cheap sequential pairing (perf guard
 
 `_file_meta()` adds `{size, mtime}` per file for the UI's file info bars.
 
+### The hex diff engine (same module, v1.3.0)
+
+`compute_hex_diff(left_path, right_path)` powers the binary/HEX view. Both files are chunked into **16-byte rows** (canonical `hexdump -C` width); `SequenceMatcher(autojunk=False)` over the *chunk lists* aligns them (so 16-byte-multiple insertions/deletions produce proper `add`/`del` gap rows), and `replace` blocks are **zipped positionally** — rows are fixed-width, there is nothing smarter to anchor on. Row shapes reuse the text model (`t`: `eq/mod/del/add`), but `l`/`r` are **1-based 16-byte-row indices** into base64-encoded byte windows (`left_b64`/`right_b64`); the UI formats the hexdump text and computes **per-byte** change highlighting itself by comparing the paired rows' bytes. No `m`, no `ls`/`rs` in hex rows.
+
+```python
+HEX_BYTES_PER_ROW  = 16       # hexdump -C row width (UI hard-assumes 16 too)
+HEX_VIEW_MAX_BYTES = 131072   # 128 KB rendered per side; the rest is reported, not drawn
+_HEX_MAX_MATCH_COST = 8_000_000  # difflib work bound -> positional pairing fallback
+```
+
+Honesty guarantees: `identical` is computed on the **whole files** (`bytes_equal` → `filecmp.cmp(shallow=False)`), never on the truncated windows; `truncated.{left,right}` + `left_total`/`right_total` let the UI say "differs beyond the rendered window". The `match_cost` guard (in `binary_detect.py`) caps difflib's quadratic blow-up on degenerate repetitive content (zero-page-heavy files) by falling back to offset-zipped pairing. Known limitation: a **non-16-multiple** insertion shifts every following row and degrades to a long `mod` run — accepted, BC-grade byte realignment isn't worth it for artifact comparison.
+
+`compute_hex_single(path)` returns the one-file equivalent (`b64/truncated/total/binary/meta`) for the unmatched view. Binary *detection* (`is_binary_file`: extension fast-path, then an 8 KB NUL/control-byte sniff) lives in `binary_detect.py` together with `bytes_equal`, `binary_similarity` and `read_head`.
+
 ---
 
 ## 5. HTTP surface (`comparator/urls.py` + `views.py`)
@@ -178,8 +200,8 @@ MAX_PAIR_AREA  = 2500   # L*R above this -> cheap sequential pairing (perf guard
 | GET | `/` | `index` | Render main comparison page |
 | POST | `/api/compare/` | `compare` | Body `{left_dir, right_dir, settings?, exclusions?}` → JSON of matched/unmatched/stats. `settings` optionally overrides the tunable engine constants for that run (keys = `SETTING_BOUNDS` in `correspondence.py`: `llm_failure_limit`, `max_llm_per_file`, `llm_min_sim`, `content_sim_threshold`); values are clamped, unknown keys ignored, effective values echoed back in `stats.settings`. `exclusions` is `{files: [...], dirs: [...]}` wildcard patterns (fnmatch; patterns with `/` match relative paths, plain patterns match basenames anywhere); matching items are pruned from both scans and never appear in results — normalized by `normalize_exclusions()` in `file_scanner.py` (caps: 200 patterns, 300 chars) and echoed back in `stats.exclusions`. `@csrf_exempt`. |
 | GET | `/api/browse/?path=` | `browse` | Directory picker backend. No `path` → drive letters (Windows) or `/` (Unix). Returns `{entries:[{name,path}], current, parent}`. Skips dotfiles + `node_modules`/`__pycache__`/`$recycle.bin`/etc. Returns 403 on `PermissionError`. |
-| GET | `/file-compare/?left=&right=` | `file_compare` | Render the BC-style diff viewer. Also accepts `?unmatched=left\|right` single-file mode. |
-| GET | `/api/file-diff/?left=&right=` | `file_diff` | **Aligned-row diff JSON** (shape below). `?unmatched=left\|right` returns one file's raw lines (legacy shape: `left_lines`/`right_lines` + empty `opcodes`). |
+| GET | `/file-compare/?left=&right=` | `file_compare` | Render the BC-style diff viewer. Also accepts `?unmatched=left\|right` single-file mode and `?hex=1` (open in hex view). The view sniffs both files and passes `force_hex` into the template when a binary is involved (HEX switch renders checked + locked). |
+| GET | `/api/file-diff/?left=&right=` | `file_diff` | **Aligned-row diff JSON** (shape below). `?hex=1` requests the **hex payload**; binary files are ALWAYS answered with the hex payload whether requested or not (their bytes never enter the text pipeline). `?unmatched=left\|right` returns one file's raw lines (legacy shape) or, for binaries / with `hex=1`, the single-file hex payload. |
 
 **Response conventions:** errors are `JsonResponse({'error': ...}, status=4xx/5xx)`. `compare` maps `ValueError` (e.g. missing directory) → 400 and any other exception → 500 (logged via `logger.exception`). All HTML responses set aggressive `no-cache` headers (this tool is edited live and must never serve stale markup).
 
@@ -197,6 +219,19 @@ MAX_PAIR_AREA  = 2500   # L*R above this -> cheap sequential pairing (perf guard
 ```
 Inside `replace` blocks, `_align_replace()` recursively anchors on the best-matching line pair (`SequenceMatcher.ratio() > PAIR_THRESHOLD=0.5`, perf guard `MAX_PAIR_AREA=2500`) so *corresponding lines face each other* even when line numbers drift; unpairable lines become stacked del/add rows. `ls`/`rs` are word-level intra-line segments (`[text, changed]`) that drive the in-line change highlighting. `m:1` flags minor rows (whitespace-only / blank), which the UI's "Minor" toggle can treat as same. The unmatched single-file mode (in `views.py`) still returns the old `left_lines/right_lines/opcodes` shape.
 
+**Hex payload shape** (`compute_hex_diff`, marked by `hex: true`):
+```
+{ hex: true,
+  rows: [ {t:'eq',l:1,r:1}, {t:'mod',l:2,r:2}, {t:'del',l:3}, {t:'add',r:3} ],
+                                     # l/r = 1-based 16-byte ROW indices into the windows
+  left_b64, right_b64,               # base64 byte windows (<= HEX_VIEW_MAX_BYTES each)
+  identical: bool,                   # FULL-file byte equality (truthful under truncation)
+  truncated: {left, right}, left_total, right_total,
+  left_binary, right_binary,         # content-level detection per side (drives BIN chips)
+  left_meta, right_meta, left_path, right_path }
+```
+The unmatched hex variant adds `unmatched: 'left'|'right'` and fills only that side's `*_b64/meta/total`. **`compare`'s matched entries** carry `binary: true` when either side is binary, and each file dict from `FileInfo.to_dict()` now includes a `binary` flag (used for BIN tags on unmatched rows); `stats.binary_matches` feeds the teal "Binary" chip.
+
 ---
 
 ## 6. Frontend conventions (important — read before touching UI)
@@ -213,7 +248,9 @@ Consequences:
 
 ### The diff viewer (`file_compare.html`) — feature map & internals
 
-**User-facing features** (BC 5 imitation): four view modes — All / Diffs / Same / **Context** (keys `1`–`4`; **Context is the default** and collapses unchanged runs into clickable "··· N unchanged lines ···" separators); a **Minor** toggle (`m`) that treats whitespace-only rows as same; **section navigation** (Prev/Next buttons, keys `n`/`p`, flash-highlights the target section, indicator "Section k / N" in the status bar); a **Swap** button (reloads the page with sides exchanged); a clickable/draggable **overview minimap** with a live viewport rectangle; word-level intra-line change highlighting; diagonal-hatched alignment gaps; file info bars (name / dir / size / mtime); a bottom status bar with per-type line counts (or "✓ Files are identical"); synchronized two-panel scrolling; and a single-file **unmatched** mode that disables the toolbar and hides the minimap.
+**User-facing features** (BC 5 imitation): four view modes — All / Diffs / Same / **Context** (keys `1`–`4`; **Context is the default** and collapses unchanged runs into clickable "··· N unchanged lines ···" separators); a **Minor** toggle (`m`) that treats whitespace-only rows as same; a **HEX switch** (`h`, teal toggle in the toolbar) that swaps the whole viewer into a colored `hexdump -C` byte comparison — optional on text pairs, **checked + `disabled` + 🔒 lock glyph** whenever a binary is involved (`FORCE_HEX`, from the server's `force_hex` context or a hex-upgraded API response; `setHex()` hard-refuses to leave hex when forced); **section navigation** (Prev/Next buttons, keys `n`/`p`, flash-highlights the target section, indicator "Section k / N" in the status bar); a **Swap** button (reloads the page with sides exchanged, preserving `hex=1`); a clickable/draggable **overview minimap** with a live viewport rectangle; word-level intra-line change highlighting; diagonal-hatched alignment gaps; file info bars (name / dir / size / mtime, plus a teal **BIN** chip on binary sides); a bottom status bar with per-type line counts (or "✓ Files are identical" / "✓ Files are byte-for-byte identical"); synchronized two-panel scrolling; and a single-file **unmatched** mode that disables the toolbar and hides the minimap (the HEX switch stays live there — hexdump works on one file too).
+
+**Hex mode internals**: `HEX`/`FORCE_HEX`/`HEXDATA` + `HEXL`/`HEXR` (`Uint8Array` decoded from `left_b64`/`right_b64`); responses are cached per mode in `CACHE = {text, hex}` so toggling never refetches; `loadView()`→`applyData()` is the single load path for pair *and* unmatched. `render()` picks `hexLineHtml` (offset gutter `hex8`, `hexCells()` builds the canonical `xx xx … |ascii|` body, `.ch` spans mark differing bytes on paired `mod` rows, `.hx-z` dims NUL bytes, `.hx-a`/`.hx-p` style the ascii gutter) — the **one-`.fcl`-per-row-per-panel invariant holds in hex too** (the truncation notice `t-sep t-trunc` is appended to BOTH panels). Minor is force-disabled in hex (no whitespace in bytes); `hex=1` is kept in the URL via `history.replaceState`; `body.hexmode` class scopes hex CSS. Modes/context/sections/minimap all run unchanged through `efft()` because hex rows use the same `t` values.
 
 **JS architecture** (all inline, ES5-flavored):
 - Global state: `ROWS` (the backend row model), `MODE` (`all|diff|same|ctx`), `MINOR` (bool), `EXPANDED` (row-index map of user-expanded context), `SECTIONS` (contiguous diff runs), `CUR` (current section), `VIS` (currently rendered items), `CTX = 3` (context lines).
@@ -258,6 +295,8 @@ python AutomatedTestsStarter.py     # VISIBLE Chromium, port 9877, ~20 tests, sl
 ### Verifying diff-viewer changes (no fixtures in repo)
 There are **no `pytest` / Django `TestCase` unit tests.** For alignment-engine changes, the proven workflow is: write two small variant files (e.g. a Java class pair with an inserted block, a renamed constant, and a whitespace-only change) into a scratch directory, then either (a) call `compute_file_diff()` directly and print the `rows` (pure function, no server needed), or (b) start the server and open `/file-compare/?left=<path>&right=<path>` with the paths URL-encoded, watching the browser console for JS errors. If you add logic to `services/`, consider adding real unit tests — `compute_similarity`, `compute_content_status`, `compute_file_diff`, `_align_replace`, and `_inline_segments` are all pure functions that are trivial to test in isolation.
 
+The same workflow verifies **hex/binary changes**: `compute_hex_diff()` / `compute_hex_single()` / `is_binary_file()` / `binary_similarity()` are pure; craft byte fixtures (identical pair, single-byte flip, 16-byte-aligned insertion, >128 KB truncation pair, all-zero cost-guard pair, UTF-16 "text" file) and assert on the row signature. For the engine, build a two-folder fixture with same-named binaries in different dirs and assert `match_type='binary'`, the `(byte-identity, dir-clue)` ranking, and `stats['llm_calls'] == 0`. The bundled demo (`demo/InvoicerClassic` ↔ `demo/InvoicerMaven`) includes a binary pair (`app-icon.png` exact match, `branding/logo.png` moved+changed) for eyeballing.
+
 ---
 
 ## 8. Known issues, gotchas & tech debt
@@ -282,7 +321,11 @@ Read this list before you're surprised by something.
 
 9. **The diff viewer has no automated test coverage.** `test_browser.py` / `AutomatedTestsStarter.py` only exercise `index.html`. Changes to `file_compare.html` or `file_diff.py` must be verified manually (see §7 "Verifying diff-viewer changes").
 
-10. **`views.py` still emits the legacy shape for unmatched files.** The `?unmatched=` branch of the `file_diff` view returns `left_lines/right_lines/opcodes/minor_flags` (pre-row-model). The template's unmatched path only reads `left_lines`/`right_lines`, so the dead keys are harmless — but if you refactor, that branch is where the old shape lives.
+10. **`views.py` still emits the legacy shape for unmatched files.** The `?unmatched=` branch of the `file_diff` view returns `left_lines/right_lines/opcodes/minor_flags` (pre-row-model) *for text files*; binary/`hex=1` unmatched requests get the hex payload instead. The template's unmatched path only reads `left_lines`/`right_lines`, so the dead keys are harmless — but if you refactor, that branch is where the old shape lives.
+
+11. **Hex alignment is 16-byte-chunk-granular.** A non-16-multiple insertion in a binary shifts every subsequent row, so the tail renders as a long `mod` run instead of a clean gap (documented in §4b). Also, the hex UI hard-assumes 16 bytes/row (`hexCells`, `hex8` offsets) — changing `HEX_BYTES_PER_ROW` alone will break the frontend.
+
+12. **Adding `BINARY_EXTENSIONS` changes comparison counts.** Binary files now appear in scans, so `total_left/right` and match counts on old screenshots/expectations moved. If a tree is drowning in binary noise, the 🚫 Exclusions dialog prunes it (`*.png`, `assets`…).
 
 ---
 
@@ -304,6 +347,11 @@ Read this list before you're surprised by something.
 | I want to… | Edit |
 |---|---|
 | Change which file types are scanned | `services/file_scanner.py` → `SOURCE_EXTENSIONS` / `SKIP_DIRS` |
+| Change which extensions count as binary | `services/binary_detect.py` → `BINARY_EXTENSIONS` (content sniff: `looks_binary_bytes`) |
+| Change binary matching (dir clue, ranking) | `services/correspondence.py` → Phase 2-BIN block / `_dir_similarity` |
+| Change the hex view size cap / row width | `services/file_diff.py` → `HEX_VIEW_MAX_BYTES` / `HEX_BYTES_PER_ROW` (UI assumes 16!) |
+| Change hex colors / byte highlighting | `file_compare.html` → `hexCells()` + `.hx-z/.hx-a/.hx-p/.ch` CSS, `.fc-hex-*` for the switch |
+| Change the BIN tag / Binary chip on the main page | `templates/comparator/index.html` → `.bin-tag` / `#statBin` / `badge-teal` |
 | Change user-exclusion pattern matching / caps | `services/file_scanner.py` → `normalize_exclusions` / `_excluded` |
 | Make matching stricter/looser | `services/correspondence.py` → the 4 threshold constants |
 | Change how similarity is scored | `services/deterministic.py` → `compute_similarity` (token/identifier blend) |
