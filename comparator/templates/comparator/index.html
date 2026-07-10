@@ -48,10 +48,27 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     .hidden { display: none !important; }
 
-    .stats-bar { display: flex; flex-wrap: wrap; gap: 1.2rem; padding: 0.6rem 1.5rem; background: #e8ecf1; font-size: 0.82rem; color: #444; border-bottom: 1px solid #d0d5dd; }
-    .stats-bar span { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .stats-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding: 0.55rem 1.5rem; background: #e8ecf1; font-size: 0.82rem; color: #444; border-bottom: 1px solid #d0d5dd; }
+    .stats-summary { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 1.1rem; }
+    .stats-summary > span { display: inline-flex; align-items: center; gap: 0.3rem; }
     .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-weight: 600; font-size: 0.78rem; color: #fff; }
     .badge-blue { background: #4361ee; } .badge-green { background: #2ecc71; } .badge-orange { background: #e67e22; } .badge-purple { background: #9b59b6; } .badge-gray { background: #95a5a6; } .badge-teal { background: #0e9488; }
+    .result-tools { margin-left: auto; display: flex; flex: 1 1 430px; max-width: 620px; min-width: 310px; align-items: center; justify-content: flex-end; gap: 0.45rem; }
+    .result-extension { width: 136px; height: 32px; border: 1px solid #b9c2d0; border-radius: 5px; background: #fff; color: #27364a; padding: 0 1.8rem 0 0.55rem; font-family: "Cascadia Mono", "Consolas", monospace; font-size: 0.78rem; font-weight: 600; outline: none; cursor: pointer; }
+    .result-extension:focus { border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,0.14); }
+    .result-search { position: relative; flex: 1 1 260px; min-width: 180px; max-width: 390px; }
+    .result-search-icon { position: absolute; left: 0.62rem; top: 50%; transform: translateY(-50%); color: #66758b; font-size: 0.9rem; line-height: 1; pointer-events: none; z-index: 1; }
+    .result-search input { width: 100%; height: 32px; border: 1px solid #b9c2d0; border-radius: 5px; background: #fff; color: #1f2937; padding: 0 2rem 0 2rem; font-family: "Segoe UI", Tahoma, sans-serif; font-size: 0.8rem; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+    .result-search input:focus { border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,0.14); }
+    .result-search-clear { position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border: none; background: transparent; color: #7b8798; font-size: 1.05rem; line-height: 1; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.12s, color 0.12s; }
+    .result-search.has-query .result-search-clear { opacity: 1; pointer-events: auto; }
+    .result-search-clear:hover { color: #c0392b; }
+    .result-search-count { min-width: 58px; color: #5b6778; font-size: 0.72rem; font-weight: 700; text-align: right; white-space: nowrap; }
+    .search-mark { background: #ffe36e; color: #18202c; border-radius: 2px; padding: 0 1px; box-shadow: 0 0 0 1px rgba(184,134,11,0.28); }
+    tr.search-hit td { position: relative; }
+    tr.search-current td { box-shadow: inset 0 2px 0 #f59e0b, inset 0 -2px 0 #f59e0b; }
+    tr.search-current td:first-child { box-shadow: inset 2px 0 0 #f59e0b, inset 0 2px 0 #f59e0b, inset 0 -2px 0 #f59e0b; }
+    tr.search-current td:last-child { box-shadow: inset -2px 0 0 #f59e0b, inset 0 2px 0 #f59e0b, inset 0 -2px 0 #f59e0b; }
 
     .results-section { padding: 0.8rem 1rem 2rem; }
     .comparison-panel-wrapper { overflow-x: auto; border: 1px solid #cdd4dd; border-radius: 10px; background: #fff; box-shadow: 0 4px 18px rgba(27,58,92,0.10); }
@@ -180,6 +197,15 @@
     @media (max-width: 900px) {
       .input-section { flex-direction: column; }
       .action-col { flex-direction: row; justify-content: center; }
+      .result-tools { flex-basis: 100%; max-width: none; min-width: 0; margin-left: 0; justify-content: stretch; }
+      .result-search { max-width: none; }
+    }
+    @media (max-width: 600px) {
+      .action-col { gap: 0.35rem; min-width: 0; }
+      .result-tools { display: grid; grid-template-columns: 112px minmax(0, 1fr); width: 100%; }
+      .result-extension { width: 100%; }
+      .result-search { width: 100%; min-width: 0; }
+      .result-search-count { grid-column: 1 / -1; min-width: 0; text-align: right; }
     }
   </style>
 </head>
@@ -229,7 +255,20 @@
   </div>
 
   <section id="statsBar" class="stats-bar hidden">
-    <span id="statTotal"></span><span id="statIgnored"></span><span id="statExact"></span><span id="statDet"></span><span id="statBin"></span><span id="statLLM"></span><span id="statCalls"></span>
+    <div class="stats-summary">
+      <span id="statTotal"></span><span id="statIgnored"></span><span id="statExact"></span><span id="statDet"></span><span id="statBin"></span><span id="statLLM"></span><span id="statCalls"></span>
+    </div>
+    <form id="resultTools" class="result-tools" role="search">
+      <select id="resultExtension" class="result-extension" aria-label="Filter by file extension" title="Show rows where either side has this extension" disabled>
+        <option value="*.*">*.*</option>
+      </select>
+      <div id="resultSearchWrap" class="result-search">
+        <span class="result-search-icon" aria-hidden="true">&#128269;</span>
+        <input type="search" id="resultSearch" placeholder="Search all columns" aria-label="Search all table columns" autocomplete="off" spellcheck="false">
+        <button type="button" class="result-search-clear" data-action="result-search-clear" aria-label="Clear table search" title="Clear search">&times;</button>
+      </div>
+      <output id="resultSearchCount" class="result-search-count" aria-live="polite">0 rows</output>
+    </form>
   </section>
 
   <section id="resultsSection" class="results-section hidden">
@@ -433,7 +472,8 @@
     settings: {},         // engine settings sent with each compare request
     charsets: { left: "auto", right: "auto" },
     exclusions: { files: [], dirs: [], showExcluded: true },
-    exclDraft: null       // working copy while the Exclusions dialog is open
+    exclDraft: null,      // working copy while the Exclusions dialog is open
+    resultView: { extension: "*.*", query: "", cursor: 0, timer: null }
   };
 
   // ---- Engine settings definition (must mirror SETTING_BOUNDS in
@@ -566,6 +606,7 @@
       case "excl-add-dirs":     exclAdd("dirs"); break;
       case "excl-toggle":       exclToggle(el.getAttribute("data-side"), parseInt(el.getAttribute("data-idx"), 10)); break;
       case "excl-remove":       exclRemove(el.getAttribute("data-side"), parseInt(el.getAttribute("data-idx"), 10)); break;
+      case "result-search-clear": clearResultSearch(); break;
     }
   }
 
@@ -872,6 +913,249 @@
   loadExclusions();
 
   // ==============================================================
+  // RESULT FILTER + SEARCH
+  // ==============================================================
+  var NO_EXTENSION = "__no_extension__";
+
+  function extensionValue(name) {
+    name = String(name || "");
+    var slash = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"));
+    if (slash >= 0) name = name.slice(slash + 1);
+    var dot = name.lastIndexOf(".");
+    if (dot <= 0 || dot === name.length - 1) return NO_EXTENSION;
+    return name.slice(dot).toLowerCase();
+  }
+
+  function visitResultFiles(data, fn) {
+    (data.matched || []).forEach(function(m) { fn(m.left); fn(m.right); });
+    ["unmatched_left", "unmatched_right", "ignored_left", "ignored_right"].forEach(function(key) {
+      (data[key] || []).forEach(fn);
+    });
+  }
+
+  function resetResultTools(disabled) {
+    APP.resultView.extension = "*.*";
+    APP.resultView.query = "";
+    APP.resultView.cursor = 0;
+    if (APP.resultView.timer) clearTimeout(APP.resultView.timer);
+    APP.resultView.timer = null;
+    var select = document.getElementById("resultExtension");
+    select.innerHTML = '<option value="*.*">*.*</option>';
+    select.value = "*.*";
+    select.disabled = disabled !== false;
+    var input = document.getElementById("resultSearch");
+    input.value = "";
+    input.disabled = disabled !== false;
+    document.getElementById("resultSearchWrap").classList.remove("has-query");
+    document.getElementById("resultSearchCount").textContent = "0 rows";
+  }
+
+  function prepareResultTools(data) {
+    var counts = {};
+    visitResultFiles(data, function(file) {
+      if (!file) return;
+      var ext = extensionValue(file.name);
+      counts[ext] = (counts[ext] || 0) + 1;
+    });
+    var extensions = Object.keys(counts).sort(function(a, b) {
+      if (a === NO_EXTENSION) return -1;
+      if (b === NO_EXTENSION) return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    });
+    resetResultTools(false);
+    var select = document.getElementById("resultExtension");
+    extensions.forEach(function(ext) {
+      var label = ext === NO_EXTENSION ? "[no extension]" : ext;
+      var option = document.createElement("option");
+      option.value = ext;
+      option.textContent = label + " (" + counts[ext] + ")";
+      select.appendChild(option);
+    });
+  }
+
+  function fileHasSelectedExtension(file) {
+    return APP.resultView.extension === "*.*" ||
+      (file && extensionValue(file.name) === APP.resultView.extension);
+  }
+
+  function foldSearchText(value) {
+    value = String(value || "");
+    var text = "", map = [];
+    for (var i = 0; i < value.length; i++) {
+      var folded = value.charAt(i);
+      if (folded.normalize) folded = folded.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      folded = folded.toLocaleLowerCase();
+      for (var j = 0; j < folded.length; j++) {
+        text += folded.charAt(j);
+        map.push(i);
+      }
+    }
+    return { text: text, map: map };
+  }
+
+  function tokenMatch(value, token, exactOnly) {
+    var folded = foldSearchText(value);
+    var index = folded.text.indexOf(token);
+    var normalizedPositions = [];
+    if (index >= 0) {
+      for (var i = index; i < index + token.length; i++) normalizedPositions.push(i);
+      return { score: folded.text === token ? 1200 : (index === 0 ? 1100 : 1000 - index), positions: normalizedPositions.map(function(pos) { return folded.map[pos]; }) };
+    }
+    if (exactOnly || token.length < 3) return null;
+
+    var cursor = 0;
+    for (var t = 0; t < token.length; t++) {
+      var found = folded.text.indexOf(token.charAt(t), cursor);
+      if (found < 0) return null;
+      normalizedPositions.push(found);
+      cursor = found + 1;
+    }
+    var span = normalizedPositions[normalizedPositions.length - 1] - normalizedPositions[0] + 1;
+    if (span > Math.max(token.length * 4, token.length + 8)) return null;
+    return { score: 600 - span, positions: normalizedPositions.map(function(pos) { return folded.map[pos]; }) };
+  }
+
+  function mergePositions(target, positions) {
+    for (var i = 0; i < positions.length; i++) target[positions[i]] = true;
+  }
+
+  function rowSearchMatch(cells, rawQuery) {
+    var query = foldSearchText(rawQuery).text.trim();
+    if (!query) return null;
+    var highlights = [];
+    for (var h = 0; h < cells.length; h++) highlights.push({});
+
+    if (/\s/.test(query)) {
+      var phraseFound = false;
+      for (var p = 0; p < cells.length; p++) {
+        var phrase = tokenMatch(cells[p].textContent, query, true);
+        if (phrase) { mergePositions(highlights[p], phrase.positions); phraseFound = true; }
+      }
+      if (phraseFound) return highlights;
+    }
+
+    var tokens = query.split(/\s+/).filter(function(token) { return token; });
+    for (var ti = 0; ti < tokens.length; ti++) {
+      var tokenFound = false;
+      var matches = [];
+      for (var ci = 0; ci < cells.length; ci++) {
+        var match = tokenMatch(cells[ci].textContent, tokens[ti], false);
+        matches.push(match);
+        if (match) tokenFound = true;
+      }
+      if (!tokenFound) return null;
+      for (var mi = 0; mi < matches.length; mi++) {
+        if (matches[mi]) mergePositions(highlights[mi], matches[mi].positions);
+      }
+    }
+    return highlights;
+  }
+
+  function highlightCell(cell, positions) {
+    if (!Object.keys(positions).length) return;
+    var walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, null);
+    var nodes = [], node;
+    while ((node = walker.nextNode())) nodes.push(node);
+    var offset = 0;
+    nodes.forEach(function(textNode) {
+      var value = textNode.nodeValue;
+      var hasMark = false;
+      for (var i = 0; i < value.length; i++) {
+        if (positions[offset + i]) { hasMark = true; break; }
+      }
+      if (!hasMark) { offset += value.length; return; }
+      var fragment = document.createDocumentFragment();
+      var start = 0;
+      while (start < value.length) {
+        var marked = !!positions[offset + start];
+        var end = start + 1;
+        while (end < value.length && !!positions[offset + end] === marked) end++;
+        var part = value.slice(start, end);
+        if (marked) {
+          var mark = document.createElement("mark");
+          mark.className = "search-mark";
+          mark.textContent = part;
+          fragment.appendChild(mark);
+        } else {
+          fragment.appendChild(document.createTextNode(part));
+        }
+        start = end;
+      }
+      textNode.parentNode.replaceChild(fragment, textNode);
+      offset += value.length;
+    });
+  }
+
+  function focusSearchHit(index, smooth) {
+    var hits = document.querySelectorAll("#comparisonBody tr.search-hit");
+    if (!hits.length) return;
+    index = (index + hits.length) % hits.length;
+    APP.resultView.cursor = index;
+    Array.prototype.forEach.call(hits, function(row) { row.classList.remove("search-current"); });
+    var row = hits[index];
+    row.classList.add("search-current");
+    document.getElementById("resultSearchCount").textContent = (index + 1) + " / " + hits.length;
+    var top = row.getBoundingClientRect().top + window.pageYOffset - 6;
+    window.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
+  }
+
+  function applyTableSearch(visibleRows) {
+    var query = APP.resultView.query.trim();
+    var count = document.getElementById("resultSearchCount");
+    if (!query) { count.textContent = visibleRows + (visibleRows === 1 ? " row" : " rows"); return; }
+
+    var rows = document.querySelectorAll("#comparisonBody tr.row-matched, #comparisonBody tr.row-unmatched, #comparisonBody tr.row-ignored");
+    var hitCount = 0;
+    Array.prototype.forEach.call(rows, function(row) {
+      var cells = row.querySelectorAll("td");
+      var highlights = rowSearchMatch(cells, query);
+      if (!highlights) return;
+      row.classList.add("search-hit");
+      hitCount++;
+      for (var i = 0; i < cells.length; i++) highlightCell(cells[i], highlights[i]);
+    });
+    if (!hitCount) { count.textContent = "0 hits"; return; }
+    APP.resultView.cursor = 0;
+    count.textContent = "1 / " + hitCount;
+    requestAnimationFrame(function() { focusSearchHit(0, true); });
+  }
+
+  function clearResultSearch() {
+    if (APP.resultView.timer) clearTimeout(APP.resultView.timer);
+    APP.resultView.timer = null;
+    APP.resultView.query = "";
+    APP.resultView.cursor = 0;
+    var input = document.getElementById("resultSearch");
+    input.value = "";
+    document.getElementById("resultSearchWrap").classList.remove("has-query");
+    renderCurrentResults();
+    input.focus();
+  }
+
+  document.getElementById("resultTools").addEventListener("submit", function(e) { e.preventDefault(); });
+  document.getElementById("resultExtension").addEventListener("change", function() {
+    APP.resultView.extension = this.value || "*.*";
+    APP.resultView.cursor = 0;
+    renderCurrentResults();
+  });
+  document.getElementById("resultSearch").addEventListener("input", function() {
+    APP.resultView.query = this.value;
+    document.getElementById("resultSearchWrap").classList.toggle("has-query", !!this.value);
+    if (APP.resultView.timer) clearTimeout(APP.resultView.timer);
+    APP.resultView.timer = setTimeout(function() {
+      APP.resultView.timer = null;
+      renderCurrentResults();
+    }, 90);
+  });
+  document.getElementById("resultSearch").addEventListener("keydown", function(e) {
+    if (e.key === "Escape") { e.preventDefault(); clearResultSearch(); return; }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      focusSearchHit(APP.resultView.cursor + (e.shiftKey ? -1 : 1), true);
+    }
+  });
+
+  // ==============================================================
   // COMPARISON
   // ==============================================================
   function clearAll() {
@@ -885,6 +1169,7 @@
     APP.lastData = null;
     APP.matchSorted = false;
     document.getElementById("matchHdr").innerHTML = "Match";
+    resetResultTools(true);
   }
 
   function runComparison() {
@@ -940,6 +1225,17 @@
       APP.lastData = data;
       APP.matchSorted = false;
       document.getElementById("matchHdr").innerHTML = "Match";
+      prepareResultTools(data);
+    }
+
+    if (APP.resultView.extension !== "*.*") {
+      matched = matched.filter(function(m) {
+        return fileHasSelectedExtension(m.left) || fileHasSelectedExtension(m.right);
+      });
+      unmL = unmL.filter(fileHasSelectedExtension);
+      unmR = unmR.filter(fileHasSelectedExtension);
+      ignL = ignL.filter(fileHasSelectedExtension);
+      ignR = ignR.filter(fileHasSelectedExtension);
     }
 
     if (!skipStats) {
@@ -1010,14 +1306,22 @@
 
     if (!matched.length && !unmL.length && !unmR.length &&
         (!showExcluded || (!ignL.length && !ignR.length))) {
+      var noRowsMessage = showExcluded ? 'No files found.' : 'No comparable files found. Excluded files are hidden.';
+      if (APP.resultView.extension !== "*.*") {
+        noRowsMessage = 'No visible rows contain ' +
+          (APP.resultView.extension === NO_EXTENSION ? '[no extension]' : APP.resultView.extension) + '.';
+      }
       html = '<tr class="no-results-row"><td colspan="5">' +
-        (showExcluded ? 'No files found.' : 'No comparable files found. Excluded files are hidden.') +
+        esc(noRowsMessage) +
         '</td></tr>';
     }
 
     body.innerHTML = html;
     document.getElementById("resultsSection").classList.remove("hidden");
-    document.getElementById("resultsSection").scrollIntoView({ behavior: "smooth" });
+    var visibleRows = matched.length + unmL.length + unmR.length +
+      (showExcluded ? ignL.length + ignR.length : 0);
+    applyTableSearch(visibleRows);
+    if (!skipStats) document.getElementById("resultsSection").scrollIntoView({ behavior: "smooth" });
   }
 
   // ==============================================================

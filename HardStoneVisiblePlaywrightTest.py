@@ -148,6 +148,14 @@ def create_dataset(root: Path) -> dict:
     counts["matched"] += 2
     counts["disk_files"] += 4
 
+    # One content-only correspondence with different names and extensions.
+    # Extension filtering must keep the row for either side (OR semantics).
+    cross_ext = "class SharedMigrationContract {\n    int stable = 7;\n}\n"
+    write_text(left / "cross_extension" / "legacy_payment.java", cross_ext)
+    write_text(right / "cross_extension" / "modern_invoice.kt", cross_ext)
+    counts["matched"] += 1
+    counts["disk_files"] += 2
+
     # 15 supported Java files ignored by file exclusion.
     for i in range(15):
         rel = Path("blocked") / f"visible_but_blocked_{i:03d}.blocked.java"
@@ -359,81 +367,141 @@ def main() -> int:
             v.require("20 stats bar is visible",
                       page.locator("#statsBar").is_visible())
 
+            v.require("21 result filter and search mini-form is visible",
+                      page.locator("#resultExtension").is_visible()
+                      and page.locator("#resultSearch").is_visible(),
+                      page.locator("#statsBar"))
+            v.require("22 extension filter defaults to all files",
+                      page.locator("#resultExtension").input_value() == "*.*")
+            extension_values = page.locator("#resultExtension option").evaluate_all(
+                "options => options.map(option => option.value)")
+            v.require("23 extension options are built from both projects",
+                      all(value in extension_values for value in [
+                          ".java", ".kt", ".jar", "__no_extension__"
+                      ]))
+
+            page.locator("#resultExtension").select_option(".java")
+            cross_row = page.locator("tr.row-matched", has_text="legacy_payment.java")
+            v.require("24 left extension keeps cross-extension matched row",
+                      cross_row.count() == 1
+                      and "modern_invoice.kt" in cross_row.inner_text(),
+                      cross_row)
+            page.locator("#resultExtension").select_option(".kt")
+            cross_row = page.locator("tr.row-matched", has_text="modern_invoice.kt")
+            v.require("25 right extension keeps cross-extension matched row",
+                      cross_row.count() == 1
+                      and "legacy_payment.java" in cross_row.inner_text(),
+                      cross_row)
+
+            page.locator("#resultExtension").select_option(".jar")
+            filtered_rows = page.locator(
+                "tr.row-matched, tr.row-unmatched, tr.row-ignored")
+            v.require("26 extension filter removes unrelated rows",
+                      filtered_rows.count() == 1
+                      and "artifact_000.jar" in filtered_rows.first.inner_text(),
+                      filtered_rows.first)
+
+            page.locator("#resultExtension").select_option("*.*")
+            v.require("27 all-files filter restores the complete table",
+                      page.locator("tr.row-matched").count() == counts["matched"]
+                      and page.locator("tr.row-unmatched").count() == counts["unmatched"]
+                      and page.locator("tr.row-ignored").count() == counts["expected_ignored_total"])
+
+            page.locator("#resultSearch").fill("all_text_formats")
+            page.wait_for_timeout(300)
+            v.require("28 directory-column search highlights every hit",
+                      page.locator("tr.search-hit").count() >= 30
+                      and page.locator("mark.search-mark").count() >= 30,
+                      page.locator("tr.search-current"))
+            page.locator("#resultSearch").fill("altxt023")
+            page.wait_for_timeout(900)
+            fuzzy_target = page.locator("tr.search-current")
+            v.require("29 fuzzy search finds and highlights the intended row",
+                      fuzzy_target.count() == 1
+                      and "all_text_023.wgsl" in fuzzy_target.inner_text()
+                      and fuzzy_target.locator("mark.search-mark").count() > 0,
+                      fuzzy_target)
+            target_top = fuzzy_target.evaluate("el => el.getBoundingClientRect().top")
+            v.require("30 first search hit scrolls to the top visible row",
+                      0 <= target_top < 40,
+                      fuzzy_target)
+            page.locator("[data-action='result-search-clear']").click()
+
             matched_rows = page.locator("tr.row-matched").count()
             unmatched_rows = page.locator("tr.row-unmatched").count()
             ignored_rows = page.locator("tr.row-ignored").count()
-            v.require("21 matched row count is exact",
+            v.require("31 matched row count is exact",
                       matched_rows == counts["matched"])
-            v.require("22 unmatched row count is exact",
+            v.require("32 unmatched row count is exact",
                       unmatched_rows == counts["unmatched"])
-            v.require("23 ignored row count is exact",
+            v.require("33 ignored row count is exact",
                       ignored_rows == counts["expected_ignored_total"])
 
             labels = page.locator(".sep-label").all_inner_texts()
-            v.require("24 corresponding section label is visible",
+            v.require("34 corresponding section label is visible",
                       any("CORRESPONDING FILES" in label for label in labels),
                       page.locator(".sep-label").first)
-            v.require("25 unmatched section label is visible",
+            v.require("35 unmatched section label is visible",
                       any("UNMATCHED FILES" in label for label in labels))
-            v.require("26 ignored section label is visible",
+            v.require("36 ignored section label is visible",
                       any("IGNORED FILES" in label for label in labels))
 
-            v.require("27 green matched rows are visible",
+            v.require("37 green matched rows are visible",
                       page.locator("tr.row-matched").first.is_visible(),
                       page.locator("tr.row-matched").first)
-            v.require("28 red unmatched rows are visible",
+            v.require("38 red unmatched rows are visible",
                       page.locator("tr.row-unmatched").first.is_visible(),
                       page.locator("tr.row-unmatched").first)
-            v.require("29 dark gray ignored rows are visible",
+            v.require("39 dark gray ignored rows are visible",
                       page.locator("tr.row-ignored").first.is_visible(),
                       page.locator("tr.row-ignored").first)
 
             body_text = page.locator("#comparisonBody").inner_text()
-            v.require("30 unsupported-extension rejection is gone",
+            v.require("40 unsupported-extension rejection is gone",
                       "Unsupported extension" not in body_text)
-            v.require("31 md cu hpp wgsl jsp text files are matched",
+            v.require("41 md cu hpp wgsl jsp text files are matched",
                       all(page.locator("tr.row-matched", has_text=name).count() == 1 for name in [
                           "all_text_000.md", "all_text_005.cu", "all_text_006.hpp",
                           "all_text_008.wgsl", "all_text_009.jsp",
                       ]),
                       page.locator("tr.row-matched", has_text="all_text_000.md"))
             disguised = page.locator("tr.row-matched", has_text="all_text_014.exe")
-            v.require("32 text Java content disguised as exe is matched as text",
+            v.require("42 text Java content disguised as exe is matched as text",
                       disguised.count() == 1 and disguised.locator(".bin-tag").count() == 0,
                       disguised)
-            v.require("33 excluded file pattern reason is visible",
+            v.require("43 excluded file pattern reason is visible",
                       "Excluded file pattern" in body_text)
-            v.require("34 excluded directory pattern reason is visible",
+            v.require("44 excluded directory pattern reason is visible",
                       "Excluded directory pattern" in body_text)
-            v.require("35 dot alias reason is visible",
+            v.require("45 dot alias reason is visible",
                       "Directory alias (not a file)" in body_text)
-            v.require("36 dot directory file is visible",
+            v.require("46 dot directory file is visible",
                       ".ghost" in body_text)
             extensionless = page.locator("tr.row-matched", has_text="Dockerfile_000")
-            v.require("37 extensionless text file is matched",
+            v.require("47 extensionless text file is matched",
                       extensionless.count() == 1, extensionless)
             mixed_charset = page.locator("tr.row-matched", has_text="mixed_utf.custom")
-            v.require("38 UTF-16 versus UTF-8 text is identical",
+            v.require("48 UTF-16 versus UTF-8 text is identical",
                       mixed_charset.count() == 1
                       and mixed_charset.locator(".status-identical").count() == 1,
                       mixed_charset)
             legacy_charset = page.locator("tr.row-matched", has_text="legacy_text.unknown")
-            v.require("39 Windows-1252 versus UTF-8 text is identical",
+            v.require("49 Windows-1252 versus UTF-8 text is identical",
                       legacy_charset.count() == 1
                       and legacy_charset.locator(".status-identical").count() == 1,
                       legacy_charset)
             newline_row = page.locator("tr.row-matched", has_text="all_text_000.md")
-            v.require("40 CRLF versus LF is identical",
+            v.require("50 CRLF versus LF is identical",
                       newline_row.locator(".status-identical").count() == 1,
                       newline_row)
 
             stat_text = page.locator("#statsBar").inner_text()
-            v.require("41 ignored stat badge is visible",
+            v.require("51 ignored stat badge is visible",
                       "Ignored" in stat_text
                       and str(counts["expected_ignored_total"]) in stat_text)
 
             page.locator("#matchHdr").dblclick()
-            v.require("42 match header sorting indicator appears",
+            v.require("52 match header sorting indicator appears",
                       page.locator("#matchHdr").inner_text().strip().startswith("Match"),
                       page.locator("#matchHdr"))
 
@@ -443,16 +511,16 @@ def main() -> int:
             diff_page = popup_info.value
             diff_page.wait_for_load_state("networkidle")
             v.page = diff_page
-            v.require("43 text row opens aligned file compare",
+            v.require("53 text row opens aligned file compare",
                       "File Compare" in diff_page.title()
                       and diff_page.locator("#panels").is_visible())
-            v.require("44 CRLF-only difference produces no changed rows",
+            v.require("54 CRLF-only difference produces no changed rows",
                       diff_page.evaluate("ROWS.every(function(r) { return r.t === 'eq'; })"))
             diff_page.close()
             v.page = page
 
             binary_row = page.locator("tr.row-matched", has_text="artifact_000.jar")
-            v.require("45 native binary row has BIN marker",
+            v.require("55 native binary row has BIN marker",
                       binary_row.locator(".bin-tag").count() == 1,
                       binary_row)
             with context.expect_page(timeout=5000) as binary_popup:
@@ -461,7 +529,7 @@ def main() -> int:
             binary_page.wait_for_load_state("networkidle")
             binary_page.locator("[data-mode='all']").click()
             v.page = binary_page
-            v.require("46 native binary opens locked hex viewer",
+            v.require("56 native binary opens locked hex viewer",
                       binary_page.locator("#chkHex").is_checked()
                       and binary_page.locator("#chkHex").is_disabled()
                       and binary_page.locator("body.hexmode").count() == 1)
@@ -478,7 +546,7 @@ def main() -> int:
             except PlaywrightTimeoutError:
                 opened = False
             after_pages = len(context.pages)
-            v.require("47 double-click ignored row does not open compare",
+            v.require("57 double-click ignored row does not open compare",
                       not opened and after_pages == before_pages,
                       ignored_first)
 
@@ -486,21 +554,21 @@ def main() -> int:
             page.locator("#showExcluded").uncheck()
             page.locator("[data-action='exclusions-accept']").click()
             hidden_labels = page.locator(".sep-label").all_inner_texts()
-            v.require("48 unchecked Show excluded hides every ignored table row",
+            v.require("58 unchecked Show excluded hides every ignored table row",
                       page.locator("tr.row-ignored").count() == 0
                       and not any("IGNORED FILES" in label for label in hidden_labels))
 
             page.locator("#btnExclusions").click()
             stored_hidden = page.evaluate(
                 "JSON.parse(localStorage.getItem('wcExclusions')).showExcluded")
-            v.require("49 hidden excluded preference persists in the dialog",
+            v.require("59 hidden excluded preference persists in the dialog",
                       not page.locator("#showExcluded").is_checked()
                       and stored_hidden is False,
                       page.locator("#showExcluded"))
             page.locator("#showExcluded").check()
             page.locator("[data-action='exclusions-accept']").click()
             restored_labels = page.locator(".sep-label").all_inner_texts()
-            v.require("50 checked Show excluded restores every ignored table row",
+            v.require("60 checked Show excluded restores every ignored table row",
                       page.locator("tr.row-ignored").count() == counts["expected_ignored_total"]
                       and any("IGNORED FILES" in label for label in restored_labels),
                       page.locator("tr.row-ignored").first)

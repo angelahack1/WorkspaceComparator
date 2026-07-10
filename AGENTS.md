@@ -12,11 +12,11 @@ Guidance for Codex (and humans) working in this repository. Read this before mak
 
 It is designed for **codebase archaeology / migration verification**: "we refactored/migrated project A into project B — which files are the same, which changed, and which have no counterpart?"
 
-Portable test truth comes from two repo-owned fixtures: the bundled `demo/InvoicerClassic` ↔ `demo/InvoicerMaven` migration and the 234-file dataset generated at runtime by `HardStoneVisiblePlaywrightTest.py`. The historical MAE pair under `D:/Proyectos/Workspaces/` is still supported by `AutomatedTestsStarter.py` when those external directories exist, but it is not required by the portable suites.
+Portable test truth comes from two repo-owned fixtures: the bundled `demo/InvoicerClassic` ↔ `demo/InvoicerMaven` migration and the 236-file dataset generated at runtime by `HardStoneVisiblePlaywrightTest.py`. The historical MAE pair under `D:/Proyectos/Workspaces/` is still supported by `AutomatedTestsStarter.py` when those external directories exist, but it is not required by the portable suites.
 
 ### Two screens
 
-1. **Directory comparison** (`/`) — pick two folders, get a BeyondCompare-style two-panel table: matched files in the middle-joined green rows, unmatched files in red rows. Each matched row shows a **content-status pill** (`==` identical, `~=` minor, `!=` different) and, for AI-matched pairs, an "AI-Matched" label.
+1. **Directory comparison** (`/`) — pick two folders, get a BeyondCompare-style two-panel table: matched files in the middle-joined green rows, unmatched files in red rows. Each matched row shows a **content-status pill** (`==` identical, `~=` minor, `!=` different) and, for AI-matched pairs, an "AI-Matched" label. The stats bar also owns a dynamic extension filter and all-column fuzzy search/highlight navigator.
 2. **File comparison** (`/file-compare/`) — double-click a matched or unmatched row to open a **Beyond Compare 5-style** side-by-side viewer: aligned text rows with word-level highlighting or locked native-binary hex rows with byte highlighting. Context folding, minimap, section navigation, syntax coloring, swapping, and single-file views are covered by `docs/screenshots/04-diff-viewer.png` and the hard-stone screenshots.
 
 Both screens are **content-type aware**: every real file is scanned regardless of extension. Actual bytes decide text versus binary, so a Java source file named `.exe` stays text while unknown binary bytes stay binary. Text uses deterministic matching plus bounded LLM arbitration; native binaries use deterministic byte matching only, receive a **BIN** tag, and open in the locked **`hexdump -C`-style hex viewer**.
@@ -86,7 +86,7 @@ WorkspaceComparator/
 ├── docs/screenshots/             # README screenshots
 ├── test_browser.py               # Headless Playwright smoke test (port 9876)
 ├── AutomatedTestsStarter.py      # Visible Playwright full test (port 9877, slow-mo)
-├── HardStoneVisiblePlaywrightTest.py # Portable visible 234-file / 50-check regression
+├── HardStoneVisiblePlaywrightTest.py # Portable visible 236-file / 60-check regression
 └── test_screenshots/             # Output PNGs from the test scripts (gitignored)
 ```
 
@@ -251,6 +251,7 @@ Consequences:
 - To change the look or behavior of the main page, **edit `comparator/templates/comparator/index.html` directly.** Do **not** edit `comparator/static/comparator/*` expecting it to show up — those files are stale/dead (see §8).
 - The JS uses an **event-delegation** pattern: a single capturing `click` listener on `document` reads `data-action="..."` attributes and dispatches in `handleAction()`. When you add a button, give it a `data-action` and add a case — don't attach per-element listeners. Backdrop actions are valid only when `event.target` is the backdrop itself; never `preventDefault()` for descendant controls, because that breaks native checkbox/select behavior.
 - `index.html`'s browse **modal is toggled via inline `style.display`** (`"block"`/`"none"`), *not* via a `.hidden` class. The Engine Settings modal contains four numeric rows plus left/right charset selectors; numeric values persist in `wcEngineSettings`, charsets in `wcTextCharsets`, and both are sent on compare. The Exclusions modal uses Accept/Cancel draft semantics and persists patterns plus checked-by-default `showExcluded` in `wcExclusions`; its file/folder lists are independently bounded and scrollable. Enabled patterns are always sent, while **Show excluded** only controls whether returned ignored rows render in the table and applies immediately to the current report without another API request.
+- The stats-bar mini-form is client-only state under `APP.resultView`. `prepareResultTools()` derives extension options from both sides of matched rows plus every unmatched/ignored entry. `*.*` is the reset value and `[no extension]` maps to `__no_extension__`. A matched row passes an extension filter when **either** side matches. Search operates on rendered cells after extension/Show-excluded filtering, using case/diacritic folding, token AND matching, bounded fuzzy subsequences, `<mark class="search-mark">` highlights, and `focusSearchHit()` navigation. It must never mutate `APP.lastData` or trigger `/api/compare/`.
 - Row double-click opens the file-compare page in a new tab. Matched/unmatched rows carry file paths plus effective `data-left-encoding` / `data-right-encoding`; ignored rows intentionally have no open action.
 - The "Match" column header responds to **double-click** to toggle sorting by content status (`different → minor → identical`). The original order is cached in `APP.lastData`.
 - HTML escaping: `index.html` uses an `esc()` helper (textContent round-trip) plus `escAttr()` for attribute values; `file_compare.html` uses a faster regex-replace `esc()`. Preserve escaping whenever injecting file names, paths, or line content.
@@ -296,12 +297,12 @@ The app only calls the loopback Ollama API, but the configured `:cloud` model ma
 ```powershell
 python test_browser.py              # headless, port 9876, 6 smoke checks + screenshots
 python AutomatedTestsStarter.py     # VISIBLE Chromium, port 9877, ~20 tests, slow_mo=400
-python HardStoneVisiblePlaywrightTest.py # VISIBLE, generated 234-file dataset, 50 screenshots/checks
+python HardStoneVisiblePlaywrightTest.py # VISIBLE, generated 236-file dataset, 60 screenshots/checks
 ```
 - All scripts start an isolated Django server with `--noreload`, drive Chromium, and write PNGs to `test_screenshots/`.
 - `test_browser.py` is a portable six-check headless smoke test; when the historical MAE directories are absent it uses the bundled demo.
 - `AutomatedTestsStarter.py` is the legacy visible MAE-workspace suite and still requires those external directories.
-- `HardStoneVisiblePlaywrightTest.py` is the portable primary regression: it creates 234 real files, runs 50 headed checks, opens text and binary viewers, verifies all-extension matching, charsets, newline equality, independently scrollable exclusion lists, both **Show excluded** states, and locked hex, then keeps the browser visible for inspection.
+- `HardStoneVisiblePlaywrightTest.py` is the portable primary regression: it creates 236 real files, runs 60 headed checks, opens text and binary viewers, verifies all-extension matching, charsets, newline equality, independently scrollable exclusion lists, both **Show excluded** states, dynamic extension options, cross-extension OR filtering, fuzzy highlighted search with automatic scrolling, and locked hex, then keeps the browser visible for inspection.
 - Playwright is declared in `requirements.txt`; install its browser binary separately with `python -m playwright install chromium` if missing.
 
 ### Verifying service and diff-viewer changes
@@ -341,6 +342,8 @@ Read this list before you're surprised by something.
 
 13. **Ignored visibility is presentation-only.** Never use `showExcluded` to prune scans, alter matching, remove `ignored_left` / `ignored_right`, or change ignored stats. It belongs to `wcExclusions` in the main-page client and must re-render `APP.lastData` without rescanning.
 
+14. **Result filtering/search is also presentation-only.** Extension filtering must preserve a matched pair when either filename has the selected suffix. Search may decorate freshly rendered text nodes, but must not rewrite paths, data attributes, response arrays, stats, matching order, or backend request bodies. Re-render from `APP.lastData` before applying new marks.
+
 ---
 
 ## 9. Conventions for editing this codebase
@@ -369,6 +372,7 @@ Read this list before you're surprised by something.
 | Change the BIN tag / Binary chip on the main page | `templates/comparator/index.html` → `.bin-tag` / `#statBin` / `badge-teal` |
 | Change user-exclusion pattern matching / caps | `services/file_scanner.py` → `normalize_exclusions` / `_excluded` |
 | Change exclusion-list scrolling / **Show excluded** rendering | `templates/comparator/index.html` → `.excl-columns` / `.excl-list` / `wcExclusions` / `renderCurrentResults` |
+| Change extension filtering / table search / hit highlighting | `templates/comparator/index.html` → `.result-tools` / `APP.resultView` / `prepareResultTools` / `applyTableSearch` / `focusSearchHit` |
 | Make matching stricter/looser | `services/correspondence.py` → the 4 threshold constants |
 | Change how similarity is scored | `services/deterministic.py` → `compute_similarity` (token/identifier blend) |
 | Change the `==`/`~=`/`!=` classification | `services/deterministic.py` → `compute_content_status` |

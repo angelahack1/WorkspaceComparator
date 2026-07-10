@@ -20,7 +20,7 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
   <img src="https://img.shields.io/badge/LICENSE-MIT-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="License MIT">
 </p>
 
-<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.6 results: all-extension matched files in green, unmatched files in red, default-visible ignored rows controlled by Show excluded, binary and matching statistics">
+<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.6 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
 
 </div>
 
@@ -33,6 +33,7 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 - 🔢 **True binary files, compared in hex** — actual bytes, not extensions, decide binary status. Native binaries are matched deterministically by exact filename (directory path is the tie-break clue; AI never receives bytes) and open in a locked colored hex viewer.
 - 🔤 **Charset and newline aware** — per-file auto detection handles UTF-8, UTF-16/32 and legacy text, with optional left/right charset overrides. `CRLF`, `LF`, and `CR` are normalized before matching and diffing.
 - ⚙️ **Settings** & 🚫 **Exclusions** dialogs tune matching, select per-side charsets, and control exclusions. Large file/folder pattern lists scroll independently. **Show excluded** starts checked, persists with the patterns, and hides or restores ignored table rows without rescanning or rerunning the comparison.
+- 🔎 **Instant result navigation** — the stats bar builds an extension selector from both projects (`*.*` shows everything, including a dedicated no-extension option). Matched rows use OR semantics, so selecting either side's extension retains a cross-extension correspondence. Case/diacritic-insensitive token and fuzzy search scans every visible column, highlights coincident characters, and scrolls the first hit to the top; Enter and Shift+Enter move through hits.
 
 ## 🧭 How v1.6.0 treats every filesystem entry
 
@@ -81,8 +82,9 @@ you're finished.
 
 **1.** Pick your two folders (type the paths or browse 📁) and hit **Compare**.
 **2.** Read the verdict: green joined rows correspond, red rows lack a counterpart, and dark-gray rows are explicit exclusions or directory aliases when **Show excluded** is enabled.
-**3.** Use **Exclusions** to maintain file and folder patterns. Each pattern list has its own scrollbar; Accept commits the draft, while Cancel discards it. Toggling **Show excluded** and accepting re-renders an existing result immediately.
-**4.** **Double-click a matched or unmatched row** to open the side-by-side or single-file viewer. Ignored rows, when shown, deliberately stay inert:
+**3.** Use the stats-bar mini-form to select an extension or search all five table columns. `*.*` restores the complete report; the counter shows visible rows or search-hit position. Press Enter/Shift+Enter to move forward/backward through highlighted hits, or Escape/× to clear.
+**4.** Use **Exclusions** to maintain file and folder patterns. Each pattern list has its own scrollbar; Accept commits the draft, while Cancel discards it. Toggling **Show excluded** and accepting re-renders an existing result immediately.
+**5.** **Double-click a matched or unmatched row** to open the side-by-side or single-file viewer. Ignored rows, when shown, deliberately stay inert:
 
 <div align="center">
 <img src="docs/screenshots/04-diff-viewer.png" width="100%" alt="Beyond Compare-style diff viewer: content-aligned rows, word-level change highlights, hatched gaps, minimap and context folding">
@@ -139,10 +141,11 @@ python HardStoneVisiblePlaywrightTest.py
 python test_browser.py
 ```
 
-The hard-stone command opens a real visible Chromium window, creates a 234-file dataset, and runs
-50 screenshot-backed checks covering all-extension text, misleading extensions,
+The hard-stone command opens a real visible Chromium window, creates a 236-file dataset, and runs
+60 screenshot-backed checks covering all-extension text, misleading extensions,
 UTF/legacy charsets, CRLF/LF equality, native binary hex, independently scrollable exclusion lists,
-the **Show excluded** visibility switch, dot directories, extensionless files, and `.` / `..` ignored rows. The second command is a portable
+the **Show excluded** visibility switch, dynamic extension filtering with cross-extension OR semantics,
+fuzzy all-column search/highlighting, dot directories, extensionless files, and `.` / `..` ignored rows. The second command is a portable
 six-check headless smoke test that falls back to the bundled demo when external MAE fixtures are absent.
 
 ## 📦 Build the release exe
