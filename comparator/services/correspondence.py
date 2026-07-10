@@ -111,6 +111,8 @@ class ComparisonResult:
     matched: List[MatchResult] = field(default_factory=list)
     unmatched_left: List[FileInfo] = field(default_factory=list)
     unmatched_right: List[FileInfo] = field(default_factory=list)
+    ignored_left: List[FileInfo] = field(default_factory=list)
+    ignored_right: List[FileInfo] = field(default_factory=list)
     stats: Dict = field(default_factory=dict)
 
 
@@ -233,19 +235,28 @@ def find_correspondences(
     ignored, and the effective values echoed in stats['settings'].
 
     `exclusions` is an optional {'files': [...], 'dirs': [...]} dict of
-    wildcard patterns; matching files/directories are pruned from BOTH
-    scans, so they take no part in matching and never appear in the
-    results.  Effective patterns are echoed in stats['exclusions'].
+    wildcard patterns.  Exclusions are visible/non-destructive:
+    matching files, and files inside matching directories, are reported
+    under ignored_* and do not take part in matching.  Effective
+    patterns are echoed in stats['exclusions'].
     """
     cfg = resolve_settings(settings)
     excl = normalize_exclusions(exclusions)
-    left_files = scan_directory(left_dir, excl)
-    right_files = scan_directory(right_dir, excl)
+    left_entries = scan_directory(left_dir, excl)
+    right_entries = scan_directory(right_dir, excl)
+    left_files = [f for f in left_entries if not f.ignored]
+    right_files = [f for f in right_entries if not f.ignored]
+    ignored_left = [f for f in left_entries if f.ignored]
+    ignored_right = [f for f in right_entries if f.ignored]
 
     result = ComparisonResult()
     result.stats = {
-        'total_left': len(left_files),
-        'total_right': len(right_files),
+        'total_left': len(left_entries),
+        'total_right': len(right_entries),
+        'comparable_left': len(left_files),
+        'comparable_right': len(right_files),
+        'ignored_left': len(ignored_left),
+        'ignored_right': len(ignored_right),
         'exact_path_matches': 0,
         'deterministic_matches': 0,
         'binary_matches': 0,
@@ -566,6 +577,8 @@ def find_correspondences(
     # ------------------------------------------------------------------
     result.unmatched_left = [left_files[i] for i in sorted(free_left)]
     result.unmatched_right = [right_files[i] for i in sorted(free_right)]
+    result.ignored_left = ignored_left
+    result.ignored_right = ignored_right
 
     # Final sorting -- the LEFT side (the user's original project) is
     # the anchor: primary key = left filename, secondary key = left
@@ -576,6 +589,10 @@ def find_correspondences(
     result.unmatched_left.sort(key=lambda f: (
         f.filename.lower(), f.relative_dir.lower()))
     result.unmatched_right.sort(key=lambda f: (
+        f.filename.lower(), f.relative_dir.lower()))
+    result.ignored_left.sort(key=lambda f: (
+        f.filename.lower(), f.relative_dir.lower()))
+    result.ignored_right.sort(key=lambda f: (
         f.filename.lower(), f.relative_dir.lower()))
 
     return result

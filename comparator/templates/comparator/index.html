@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Workspace Comparator v1.3.0</title>
+  <title>Workspace Comparator v1.5.0</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { font-size: 14px; }
@@ -80,6 +80,13 @@
     .row-unmatched .cell-left-filled, .row-unmatched .cell-right-filled { background: #f8d7da; }
     .row-unmatched .cell-empty { background: #f5f5f5; }
     .row-unmatched:hover .cell-left-filled, .row-unmatched:hover .cell-right-filled { background: #f1c0c5; }
+    .row-ignored { cursor: default; }
+    .row-ignored .cell-left-ignored, .row-ignored .cell-right-ignored { background: #4b5563; color: #eef1f5; border-bottom-color: #6b7280; }
+    .row-ignored .cell-empty { background: #303642; border-bottom-color: #454c59; }
+    .row-ignored .match-cell { background: #374151; border-bottom-color: #4b5563; }
+    .row-ignored:hover .cell-left-ignored, .row-ignored:hover .cell-right-ignored { background: #566171; }
+    .ignored-tag { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; background: #1f2937; color: #d1d5db; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.6px; }
+    .ignored-reason { display: block; margin-top: 2px; color: #cbd5e1; font-size: 0.58rem; line-height: 1.2; font-family: "Segoe UI", Tahoma, sans-serif; }
 
     .status-sym { font-weight: 700; font-size: 0.85rem; font-family: "Consolas", "Courier New", monospace; display: inline-block; line-height: 1.3; padding: 0.1rem 0.5rem; border-radius: 10px; color: #fff; min-width: 38px; }
     .status-identical { background: #27ae60; box-shadow: 0 1px 3px rgba(39,174,96,0.4); }
@@ -174,7 +181,7 @@
 <body>
 
   <header class="app-header">
-    <h1>Workspace Comparator <span class="app-ver">v1.3.0</span></h1>
+    <h1>Workspace Comparator <span class="app-ver">v1.5.0</span></h1>
     <p class="subtitle">Intelligent source-code file correspondence engine</p>
   </header>
 
@@ -217,7 +224,7 @@
   </div>
 
   <section id="statsBar" class="stats-bar hidden">
-    <span id="statTotal"></span><span id="statExact"></span><span id="statDet"></span><span id="statBin"></span><span id="statLLM"></span><span id="statCalls"></span>
+    <span id="statTotal"></span><span id="statIgnored"></span><span id="statExact"></span><span id="statDet"></span><span id="statBin"></span><span id="statLLM"></span><span id="statCalls"></span>
   </section>
 
   <section id="resultsSection" class="results-section hidden">
@@ -338,7 +345,7 @@
           <button class="modal-x" data-action="exclusions-close" type="button">&times;</button>
         </div>
         <div class="excl-intro">
-          Matching files and folders are removed from the comparison entirely &mdash; they are never scanned, matched, or shown.
+          Matching files and folders are not compared, but they still stay visible in the Ignored Files section.
           Wildcards: <code>*</code> (any text) and <code>?</code> (one character). Plain patterns match the <strong>name</strong> anywhere in the tree
           (e.g. <code>*.min.js</code>, <code>generated</code>); patterns with <code>/</code> match the <strong>relative path</strong> (e.g. <code>docs/internal</code>, <code>src/*/legacy</code>).
           Use the switch to disable a pattern without deleting it.
@@ -856,6 +863,7 @@
 
   function renderResults(data, skipStats) {
     var matched = data.matched || [], unmL = data.unmatched_left || [], unmR = data.unmatched_right || [];
+    var ignL = data.ignored_left || [], ignR = data.ignored_right || [];
     var stats = data.stats || {};
 
     if (!skipStats) {
@@ -866,6 +874,7 @@
 
     if (!skipStats) {
       document.getElementById("statTotal").innerHTML = 'Files: <span class="badge badge-blue">' + stats.total_left + ' L</span> / <span class="badge badge-blue">' + stats.total_right + ' R</span>';
+      document.getElementById("statIgnored").innerHTML = 'Ignored: <span class="badge badge-gray">' + ((stats.ignored_left || 0) + (stats.ignored_right || 0)) + '</span>';
       document.getElementById("statExact").innerHTML = 'Exact: <span class="badge badge-green">' + stats.exact_path_matches + '</span>';
       document.getElementById("statDet").innerHTML = 'Deterministic: <span class="badge badge-orange">' + stats.deterministic_matches + '</span>';
       document.getElementById("statBin").innerHTML = 'Binary: <span class="badge badge-teal">' + (stats.binary_matches || 0) + '</span>';
@@ -910,7 +919,25 @@
       }
     }
 
-    if (!matched.length && !unmL.length && !unmR.length) {
+    if (ignL.length > 0 || ignR.length > 0) {
+      html += sepRow("Ignored Files (" + (ignL.length + ignR.length) + ")");
+      for (var il = 0; il < ignL.length; il++) {
+        var lr = ignL[il].ignored_reason || "Ignored by scanner";
+        html += '<tr class="row-ignored" title="Ignored: ' + escAttr(lr) + '"><td class="cell-left-ignored">' +
+          esc(ignL[il].name) + '</td><td class="cell-left-ignored">' + esc(ignL[il].directory || ".") +
+          '</td><td class="match-cell"><span class="ignored-tag">IGN</span><span class="ignored-reason">' +
+          esc(lr) + '</span></td><td class="cell-empty"></td><td class="cell-empty"></td></tr>';
+      }
+      for (var ir = 0; ir < ignR.length; ir++) {
+        var rr = ignR[ir].ignored_reason || "Ignored by scanner";
+        html += '<tr class="row-ignored" title="Ignored: ' + escAttr(rr) + '"><td class="cell-empty"></td><td class="cell-empty"></td>' +
+          '<td class="match-cell"><span class="ignored-tag">IGN</span><span class="ignored-reason">' +
+          esc(rr) + '</span></td><td class="cell-right-ignored">' + esc(ignR[ir].name) +
+          '</td><td class="cell-right-ignored">' + esc(ignR[ir].directory || ".") + '</td></tr>';
+      }
+    }
+
+    if (!matched.length && !unmL.length && !unmR.length && !ignL.length && !ignR.length) {
       html = '<tr class="no-results-row"><td colspan="5">No source files found.</td></tr>';
     }
 

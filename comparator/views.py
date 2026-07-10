@@ -83,6 +83,8 @@ def compare(request):
         ],
         'unmatched_left': [f.to_dict() for f in result.unmatched_left],
         'unmatched_right': [f.to_dict() for f in result.unmatched_right],
+        'ignored_left': [f.to_dict() for f in result.ignored_left],
+        'ignored_right': [f.to_dict() for f in result.ignored_right],
         'stats': result.stats,
     })
 

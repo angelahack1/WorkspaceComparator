@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for Claude Code (and humans) working in this repository. Read this before making changes.
+Guidance for Codex (and humans) working in this repository. Read this before making changes.
 
 ---
 
@@ -54,7 +54,7 @@ There is **no virtual environment directory** checked in and none required by th
 WorkspaceComparator/
 ├── manage.py                     # Standard Django entry point
 ├── requirements.txt              # django, requests  (NO playwright)
-├── CLAUDE.md                     # This file
+├── AGENTS.md                     # This file
 │
 ├── workspace_comparator/         # Django PROJECT (config only)
 │   ├── settings.py               # No DB, DEBUG=True, 50 MB upload cap

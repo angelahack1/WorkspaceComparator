@@ -9,15 +9,16 @@
 """
 File Scanner Module
 -------------------
-Recursively scans directories for source code files AND known binary
-artifacts (images, jars, keystores...), collecting metadata about each
-file for the correspondence engine.  Binary files are flagged with
-`is_binary` so the engine can route them to byte-level matching instead
-of the text/LLM pipeline.
+Recursively scans directories for every file, collecting metadata about
+each file for the correspondence engine.  Supported
+source files and known binary artifacts are comparable; everything else
+is returned as an ignored FileInfo so the UI can show it explicitly
+instead of silently dropping it from the report.
 
 Supports user-defined exclusions (the UI's Exclusions dialog): wildcard
-patterns for files and directories.  Excluded directories are pruned
-from the walk, so their contents are never scanned at all.
+patterns for files and directories.  Exclusions are non-destructive:
+matching files, and files under matching directories, are returned as
+ignored rows so the report stays complete.
 """
 import fnmatch
 import os
@@ -50,13 +51,14 @@ SOURCE_EXTENSIONS = {
 }
 
 SKIP_DIRS = {
+    # Historical reference only.  These directories are no longer
+    # hard-pruned: the UI must account for every non-excluded file.  The
+    # matching engine filters ignored files out before scoring, so noisy
+    # trees do not explode Phase 2 candidate sets.
     'node_modules', '__pycache__', '.git', '.svn', '.hg',
     'target', 'build', 'dist', 'bin', 'obj', 'out',
     '.idea', '.vscode', '.gradle', '.settings',
     'vendor', '.cargo', 'debug', 'release',
-    # Python environments / installed packages: an embedded runtime or
-    # venv carries thousands of third-party files (site-packages alone
-    # has ~1000s of __init__.py) that explode Phase 2 candidate sets.
     'site-packages', 'venv', 'virtualenv', 'env', 'envs',
 }
 
@@ -106,14 +108,32 @@ def _excluded(name: str, rel_path: str, patterns: List[str]) -> bool:
     return False
 
 
+def _dir_excluded(relative_dir: str, patterns: List[str]) -> bool:
+    """True when relative_dir or any ancestor matches a dir pattern."""
+    if not relative_dir:
+        return False
+    parts = relative_dir.split('/')
+    for i, name in enumerate(parts):
+        rel = '/'.join(parts[:i + 1])
+        if _excluded(name, rel, patterns):
+            return True
+    return False
+
+
 @dataclass
 class FileInfo:
-    """Represents a source or binary file found during directory scanning."""
+    """Represents a scanned file.
+
+    ignored=True means the file is intentionally visible in the UI but
+    not eligible for matching/diffing.
+    """
     filename: str
     relative_dir: str
     full_path: str
     extension: str
     is_binary: bool = False   # extension in BINARY_EXTENSIONS
+    ignored: bool = False
+    ignored_reason: str = ''
 
     @property
     def relative_path(self) -> str:
@@ -127,6 +147,8 @@ class FileInfo:
             'directory': self.relative_dir,
             'full_path': self.full_path,
             'binary': self.is_binary,
+            'ignored': self.ignored,
+            'ignored_reason': self.ignored_reason,
         }
 
 
@@ -135,16 +157,19 @@ def scan_directory(
     exclusions: Optional[Dict] = None,
 ) -> List[FileInfo]:
     """
-    Scan a directory recursively for source code and known binary files.
+    Scan a directory recursively for all files.
 
     Args:
         root_path: Absolute path to the directory to scan.
         exclusions: Optional {'files': [...], 'dirs': [...]} wildcard
-            patterns (see normalize_exclusions).  Matching directories
-            are pruned from the walk; matching files are skipped.
+            patterns (see normalize_exclusions).  Matching files and
+            files under matching directories are marked ignored, not
+            removed from the report.
 
     Returns:
-        List of FileInfo objects for each source file found.
+        List of FileInfo objects for each file found. Comparable files
+        have ignored=False; unsupported or excluded files have
+        ignored=True.
 
     Raises:
         ValueError: If the directory does not exist.
@@ -159,31 +184,51 @@ def scan_directory(
 
     files: List[FileInfo] = []
 
+    # The filesystem does not yield literal "." and ".." entries during
+    # a walk, but the report can still show them as explicit,
+    # non-comparable directory aliases when the user wants every visible
+    # thing accounted for.
+    files.append(FileInfo(
+        filename='.',
+        relative_dir='',
+        full_path=root_path,
+        extension='',
+        ignored=True,
+        ignored_reason='Directory alias (not a file)',
+    ))
+    files.append(FileInfo(
+        filename='..',
+        relative_dir='',
+        full_path=os.path.dirname(root_path),
+        extension='',
+        ignored=True,
+        ignored_reason='Directory alias (not a file)',
+    ))
+
     for dirpath, dirnames, filenames in os.walk(root_path):
         relative_dir = os.path.relpath(dirpath, root_path).replace('\\', '/')
         if relative_dir == '.':
             relative_dir = ''
 
-        # Prune directories we don't want to traverse
-        dirnames[:] = [
-            d for d in dirnames
-            if not d.startswith('.') and d.lower() not in SKIP_DIRS
-            and not _excluded(
-                d, (relative_dir + '/' + d) if relative_dir else d, dir_pats)
-        ]
+        in_excluded_dir = _dir_excluded(relative_dir, dir_pats)
 
         for filename in filenames:
             ext = os.path.splitext(filename)[1].lower()
+            rel_path = (relative_dir + '/' + filename) if relative_dir else filename
+            ignored_reasons: List[str] = []
+
             if ext in SOURCE_EXTENSIONS:
                 is_binary = False
             elif ext in BINARY_EXTENSIONS:
                 is_binary = True
             else:
-                continue
+                is_binary = False
+                ignored_reasons.append(f"Unsupported extension: {ext or '(none)'}")
 
-            rel_path = (relative_dir + '/' + filename) if relative_dir else filename
+            if in_excluded_dir:
+                ignored_reasons.append('Excluded directory pattern')
             if _excluded(filename, rel_path, file_pats):
-                continue
+                ignored_reasons.append('Excluded file pattern')
 
             files.append(FileInfo(
                 filename=filename,
@@ -191,6 +236,8 @@ def scan_directory(
                 full_path=os.path.join(dirpath, filename),
                 extension=ext,
                 is_binary=is_binary,
+                ignored=bool(ignored_reasons),
+                ignored_reason='; '.join(ignored_reasons),
             ))
 
     return files

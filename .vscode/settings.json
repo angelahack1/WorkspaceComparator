@@ -12,5 +12,6 @@
 
     // Re-read files from disk automatically when they change externally
     // and the buffer has no unsaved edits.
-    "files.autoSave": "onFocusChange"
+    "files.autoSave": "onFocusChange",
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }
