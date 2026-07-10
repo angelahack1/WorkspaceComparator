@@ -10,10 +10,9 @@
 File Scanner Module
 -------------------
 Recursively scans directories for every file, collecting metadata about
-each file for the correspondence engine.  Supported
-source files and known binary artifacts are comparable; everything else
-is returned as an ignored FileInfo so the UI can show it explicitly
-instead of silently dropping it from the report.
+each file for the correspondence engine.  Extensions never gate the
+scan: content-sniffed text files use deterministic/LLM comparison and
+content-sniffed binary files use byte/hex comparison.
 
 Supports user-defined exclusions (the UI's Exclusions dialog): wildcard
 patterns for files and directories.  Exclusions are non-destructive:
@@ -23,32 +22,9 @@ ignored rows so the report stays complete.
 import fnmatch
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
-from .binary_detect import BINARY_EXTENSIONS
-
-SOURCE_EXTENSIONS = {
-    # C family
-    '.c', '.h', '.cpp', '.hpp', '.cc', '.hh', '.cxx', '.hxx',
-    # Java
-    '.java',
-    # Rust
-    '.rs',
-    # C#
-    '.cs',
-    # Go
-    '.go',
-    # Kotlin / Scala
-    '.kt', '.kts', '.scala',
-    # Swift / Objective-C
-    '.swift', '.m', '.mm',
-    # Python
-    '.py',
-    # JavaScript / TypeScript
-    '.js', '.jsx', '.ts', '.tsx',
-    # Build / config files that may be relevant
-    '.gradle', '.xml', '.properties', '.yaml', '.yml', '.toml',
-}
+from .binary_detect import inspect_file, normalize_text_encoding
 
 SKIP_DIRS = {
     # Historical reference only.  These directories are no longer
@@ -131,7 +107,8 @@ class FileInfo:
     relative_dir: str
     full_path: str
     extension: str
-    is_binary: bool = False   # extension in BINARY_EXTENSIONS
+    is_binary: bool = False   # determined from bytes, never extension alone
+    text_encoding: str = ''   # effective charset for text; empty for binary
     ignored: bool = False
     ignored_reason: str = ''
 
@@ -147,6 +124,7 @@ class FileInfo:
             'directory': self.relative_dir,
             'full_path': self.full_path,
             'binary': self.is_binary,
+            'encoding': self.text_encoding,
             'ignored': self.ignored,
             'ignored_reason': self.ignored_reason,
         }
@@ -155,6 +133,7 @@ class FileInfo:
 def scan_directory(
     root_path: str,
     exclusions: Optional[Dict] = None,
+    text_encoding: str = 'auto',
 ) -> List[FileInfo]:
     """
     Scan a directory recursively for all files.
@@ -165,11 +144,13 @@ def scan_directory(
             patterns (see normalize_exclusions).  Matching files and
             files under matching directories are marked ignored, not
             removed from the report.
+        text_encoding: Per-side charset override, or 'auto'.  The
+            override never changes binary classification.
 
     Returns:
-        List of FileInfo objects for each file found. Comparable files
-        have ignored=False; unsupported or excluded files have
-        ignored=True.
+        List of FileInfo objects for each file found.  Every real file
+        is comparable unless explicitly excluded.  Directory aliases
+        and excluded files have ignored=True.
 
     Raises:
         ValueError: If the directory does not exist.
@@ -181,6 +162,7 @@ def scan_directory(
 
     excl = normalize_exclusions(exclusions)
     file_pats, dir_pats = excl['files'], excl['dirs']
+    requested_encoding = normalize_text_encoding(text_encoding)
 
     files: List[FileInfo] = []
 
@@ -216,14 +198,9 @@ def scan_directory(
             ext = os.path.splitext(filename)[1].lower()
             rel_path = (relative_dir + '/' + filename) if relative_dir else filename
             ignored_reasons: List[str] = []
-
-            if ext in SOURCE_EXTENSIONS:
-                is_binary = False
-            elif ext in BINARY_EXTENSIONS:
-                is_binary = True
-            else:
-                is_binary = False
-                ignored_reasons.append(f"Unsupported extension: {ext or '(none)'}")
+            full_path = os.path.join(dirpath, filename)
+            is_binary, effective_encoding = inspect_file(
+                full_path, ext, requested_encoding)
 
             if in_excluded_dir:
                 ignored_reasons.append('Excluded directory pattern')
@@ -233,9 +210,10 @@ def scan_directory(
             files.append(FileInfo(
                 filename=filename,
                 relative_dir=relative_dir,
-                full_path=os.path.join(dirpath, filename),
+                full_path=full_path,
                 extension=ext,
                 is_binary=is_binary,
+                text_encoding=effective_encoding,
                 ignored=bool(ignored_reasons),
                 ignored_reason='; '.join(ignored_reasons),
             ))

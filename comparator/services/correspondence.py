@@ -30,7 +30,7 @@ Core orchestration module.  Given two directory paths, it:
              LLM is consulted as arbiter.
 
   Phase 3 -- For still-unmatched text files whose filenames are
-             *similar* (Levenshtein ratio > 0.7) and share the same
+             *similar* (Levenshtein ratio > 0.7), regardless of
              extension, the same deterministic -> LLM pipeline is
              applied.  Binary files never enter Phases 3/3b: a renamed
              binary is undecidable, so it stays unmatched.
@@ -46,7 +46,12 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from .binary_detect import binary_similarity, bytes_equal
+from .binary_detect import (
+    binary_similarity,
+    bytes_equal,
+    normalize_charsets,
+    read_text_file,
+)
 from .file_scanner import FileInfo, normalize_exclusions, scan_directory
 from .deterministic import compute_filename_similarity, compute_similarity, compute_content_status
 from .llm_comparator import compare_with_llm, is_ollama_available
@@ -116,23 +121,9 @@ class ComparisonResult:
     stats: Dict = field(default_factory=dict)
 
 
-def _read_file(path: str) -> str:
-    """Read a file with encoding fallback.
-
-    Returns '' when the file is undecodable OR unreadable (e.g. it
-    vanished between the initial scan and this comparison -- long runs
-    over trees with transient dirs must degrade, not crash).
-    """
-    for enc in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
-        try:
-            with open(path, 'r', encoding=enc) as fh:
-                return fh.read()
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-        except OSError:
-            logger.warning("Unreadable file skipped: %s", path)
-            return ''
-    return ''
+def _read_file(path: str, encoding: str = 'auto') -> str:
+    """Read any content-sniffed text file, regardless of extension."""
+    return read_text_file(path, encoding)
 
 
 def _content_status(left: FileInfo, right: FileInfo, read=_read_file) -> str:
@@ -193,15 +184,14 @@ class _LLMGate:
         content_left = self.read(left.full_path)
         content_right = self.read(right.full_path)
         if '\x00' in content_left or '\x00' in content_right:
-            # Binary content that slipped past extension detection (the
-            # latin-1 fallback decodes anything, NULs included) must
-            # never reach the LLM -- behave like an unavailable backend
-            # without charging the circuit breaker.
+            # Secondary defense: NUL-bearing content must never reach
+            # the LLM even if a file changed after the scanner sniff.
             return -1
         self.stats['llm_calls'] += 1
         pct = compare_with_llm(
             left.filename, content_left,
             right.filename, content_right,
+            left.text_encoding, right.text_encoding,
         )
         if pct == -1:
             self.failures += 1
@@ -226,6 +216,7 @@ def find_correspondences(
     right_dir: str,
     settings: Optional[Dict] = None,
     exclusions: Optional[Dict] = None,
+    charsets: Optional[Dict] = None,
 ) -> ComparisonResult:
     """
     Compare two project directories and produce file correspondences.
@@ -242,8 +233,9 @@ def find_correspondences(
     """
     cfg = resolve_settings(settings)
     excl = normalize_exclusions(exclusions)
-    left_entries = scan_directory(left_dir, excl)
-    right_entries = scan_directory(right_dir, excl)
+    charset_cfg = normalize_charsets(charsets)
+    left_entries = scan_directory(left_dir, excl, charset_cfg['left'])
+    right_entries = scan_directory(right_dir, excl, charset_cfg['right'])
     left_files = [f for f in left_entries if not f.ignored]
     right_files = [f for f in right_entries if not f.ignored]
     ignored_left = [f for f in left_entries if f.ignored]
@@ -264,6 +256,7 @@ def find_correspondences(
         'llm_calls': 0,
         'settings': cfg,
         'exclusions': excl,
+        'charsets': charset_cfg,
     }
 
     free_left: Set[int] = set(range(len(left_files)))
@@ -274,9 +267,15 @@ def find_correspondences(
     # both files from disk.
     _cache: Dict[str, str] = {}
 
+    encodings = {
+        f.full_path: f.text_encoding
+        for f in left_entries + right_entries
+        if not f.is_binary
+    }
+
     def read(path: str) -> str:
         if path not in _cache:
-            _cache[path] = _read_file(path)
+            _cache[path] = _read_file(path, encodings.get(path, 'auto'))
         return _cache[path]
 
     gate = _LLMGate(result.stats, read, cfg['llm_failure_limit'])
@@ -370,7 +369,7 @@ def find_correspondences(
             continue  # binaries were handled in Phase 2-BIN or stay unmatched
         candidates = [
             ri for ri in right_by_name.get(lf.filename, [])
-            if ri in free_right
+            if ri in free_right and not right_files[ri].is_binary
         ]
         if not candidates:
             continue
@@ -439,7 +438,7 @@ def find_correspondences(
                 result.stats['deterministic_matches'] += 1
 
     # ------------------------------------------------------------------
-    # PHASE 3 -- similar filename (not exact), compatible extension
+    # PHASE 3 -- similar filename (not exact), any text extension
     # ------------------------------------------------------------------
     # Text files only: a *renamed* binary is undecidable (no readable
     # content, no LLM), so binaries require the exact filename and
@@ -458,10 +457,6 @@ def find_correspondences(
         for ri in list(free_right):
             rf = right_files[ri]
             if rf.is_binary:
-                continue
-
-            # Extensions must match
-            if lf.extension != rf.extension:
                 continue
 
             # Filename must be similar but not identical (identical were
@@ -523,14 +518,14 @@ def find_correspondences(
                 result.stats['deterministic_matches'] += 1
 
     # ------------------------------------------------------------------
-    # PHASE 3b -- renamed files: very different name, same content
+    # PHASE 3b -- renamed files: very different name, any text format
     # ------------------------------------------------------------------
     # A rename beyond FILENAME_SIM_THRESHOLD never reaches Phase 3, so
-    # sweep the leftovers purely by content: same extension and a
-    # deterministic similarity >= CONTENT_SIM_THRESHOLD pair up no
-    # matter how different the filenames are.  A cheap length bound
-    # prunes most of the O(L*R) sweep before any expensive comparison
-    # (a rename candidate can't be several times larger or smaller).
+    # sweep the leftovers by content regardless of extension.  Unknown,
+    # custom, and changed extensions use the same generic tokenizer.
+    # Deterministic winners pair immediately; otherwise the best few
+    # candidates may use the same bounded LLM fallback as earlier
+    # phases.  A cheap length bound prunes the O(L*R) sweep first.
     for li in list(free_left):
         lf = left_files[li]
         if lf.is_binary:
@@ -542,12 +537,11 @@ def find_correspondences(
         best: Optional[MatchResult] = None
         best_sim = 0.0
         best_ri: Optional[int] = None
+        cands: List[Tuple[float, str, int]] = []
 
         for ri in list(free_right):
             rf = right_files[ri]
             if rf.is_binary:
-                continue
-            if lf.extension != rf.extension:
                 continue
             r_len = len(read(rf.full_path))
             if r_len == 0:
@@ -556,11 +550,34 @@ def find_correspondences(
                 continue
 
             sim, confidence = _run_deterministic(lf, rf, read)
-            if sim >= cfg['content_sim_threshold'] and sim > best_sim:
-                best_sim = sim
-                status = _content_status(lf, rf, read)
-                best = MatchResult(lf, rf, 'content', sim, content_status=status)
-                best_ri = ri
+            cands.append((sim, confidence, ri))
+
+        cands.sort(key=lambda item: item[0], reverse=True)
+        if cands and cands[0][0] >= cfg['content_sim_threshold']:
+            best_sim, _confidence, best_ri = cands[0]
+            rf = right_files[best_ri]
+            status = _content_status(lf, rf, read)
+            best = MatchResult(lf, rf, 'content', best_sim, content_status=status)
+
+        if best is None:
+            for sim, _confidence, ri in cands[:cfg['max_llm_per_file']]:
+                if sim < cfg['llm_min_sim']:
+                    break
+                rf = right_files[ri]
+                llm_pct = gate.score(lf, rf)
+                logger.info(
+                    "Phase3b LLM %s <-> %s : %d",
+                    lf.relative_path, rf.relative_path, llm_pct,
+                )
+                if llm_pct >= LLM_MATCH_THRESHOLD:
+                    best_sim = float(llm_pct)
+                    status = _content_status(lf, rf, read)
+                    best = MatchResult(
+                        lf, rf, 'llm_verified', best_sim,
+                        content_status=status,
+                    )
+                    best_ri = ri
+                    break
 
         if best is not None and best_ri is not None:
             logger.info(
@@ -570,7 +587,10 @@ def find_correspondences(
             result.matched.append(best)
             free_left.discard(li)
             free_right.discard(best_ri)
-            result.stats['deterministic_matches'] += 1
+            if best.match_type == 'llm_verified':
+                result.stats['llm_matches'] += 1
+            else:
+                result.stats['deterministic_matches'] += 1
 
     # ------------------------------------------------------------------
     # PHASE 4 -- collect unmatched

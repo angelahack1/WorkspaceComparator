@@ -16,7 +16,12 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .services.binary_detect import is_binary_file
+from .services.binary_detect import (
+    is_binary_file,
+    normalize_charsets,
+    normalize_text_encoding,
+    read_text_file,
+)
 from .services.correspondence import find_correspondences
 from .services.file_diff import compute_file_diff, compute_hex_diff, compute_hex_single
 
@@ -58,8 +63,11 @@ def compare(request):
     if not isinstance(exclusions, dict):
         exclusions = None
 
+    charsets = normalize_charsets(body.get('charsets'))
+
     try:
-        result = find_correspondences(left_dir, right_dir, settings, exclusions)
+        result = find_correspondences(
+            left_dir, right_dir, settings, exclusions, charsets)
     except ValueError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
     except Exception as exc:
@@ -159,6 +167,10 @@ def file_compare(request):
     left_path = request.GET.get('left', '').strip()
     right_path = request.GET.get('right', '').strip()
     unmatched_side = request.GET.get('unmatched', '').strip()
+    left_encoding = normalize_text_encoding(
+        request.GET.get('left_encoding', 'auto'))
+    right_encoding = normalize_text_encoding(
+        request.GET.get('right_encoding', 'auto'))
 
     force_hex = False
     try:
@@ -176,6 +188,8 @@ def file_compare(request):
         'right_path': right_path,
         'unmatched_side': unmatched_side,
         'force_hex': '1' if force_hex else '',
+        'left_encoding': left_encoding,
+        'right_encoding': right_encoding,
     })
     response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response['Pragma'] = 'no-cache'
@@ -198,6 +212,10 @@ def file_diff(request):
     right_path = request.GET.get('right', '').strip()
     unmatched_side = request.GET.get('unmatched', '').strip()
     want_hex = request.GET.get('hex', '').strip() == '1'
+    left_encoding = normalize_text_encoding(
+        request.GET.get('left_encoding', 'auto'))
+    right_encoding = normalize_text_encoding(
+        request.GET.get('right_encoding', 'auto'))
 
     # Single-file mode for unmatched files
     if unmatched_side in ('left', 'right'):
@@ -241,8 +259,8 @@ def file_diff(request):
                 'right_path': right_path,
             })
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                lines = f.read().splitlines()
+            encoding = left_encoding if unmatched_side == 'left' else right_encoding
+            lines = read_text_file(file_path, encoding).splitlines()
         except Exception as exc:
             logger.exception("Failed to read file: %s", exc)
             return JsonResponse(
@@ -276,7 +294,8 @@ def file_diff(request):
         if want_hex or is_binary_file(left_path) or is_binary_file(right_path):
             result = compute_hex_diff(left_path, right_path)
         else:
-            result = compute_file_diff(left_path, right_path)
+            result = compute_file_diff(
+                left_path, right_path, left_encoding, right_encoding)
     except Exception as exc:
         logger.exception("File diff failed: %s", exc)
         return JsonResponse(

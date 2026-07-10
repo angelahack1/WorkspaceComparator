@@ -26,6 +26,9 @@ import re
 import difflib
 from typing import Tuple, Set
 
+from .binary_detect import normalize_newlines
+from .text_profile import detect_text_profile
+
 # ---------------------------------------------------------------------------
 # Comment / string patterns
 # ---------------------------------------------------------------------------
@@ -33,6 +36,9 @@ _C_BLOCK_COMMENT = re.compile(r'/\*.*?\*/', re.DOTALL)
 _C_LINE_COMMENT = re.compile(r'//.*?$', re.MULTILINE)
 _PY_BLOCK_STRING = re.compile(r'(\'\'\'.*?\'\'\'|""".*?""")', re.DOTALL)
 _PY_LINE_COMMENT = re.compile(r'#.*?$', re.MULTILINE)
+_MARKUP_COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
+_SQL_LINE_COMMENT = re.compile(r'--.*?$', re.MULTILINE)
+_SEMI_LINE_COMMENT = re.compile(r';.*?$', re.MULTILINE)
 _STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 
 # ---------------------------------------------------------------------------
@@ -55,6 +61,10 @@ _JS_FUNC = re.compile(r'\bfunction\s+(\w+)')
 _JS_CLASS = re.compile(r'\bclass\s+(\w+)')
 _JS_ARROW = re.compile(
     r'(?:const|let|var)\s+(\w+)\s*=\s*(?:function|\([^)]*\)\s*=>|\w+\s*=>)')
+_GENERIC_DECL = re.compile(
+    r'\b(?:class|interface|record|struct|enum|trait|module|namespace|function|func|fn|def|sub)\s+([A-Za-z_]\w*)')
+_MARKUP_NAME = re.compile(r'<([A-Za-z_][\w:.-]*)\b')
+_DATA_KEY = re.compile(r'["\']([A-Za-z_][\w.-]*)["\']\s*[:=]')
 
 # Extension sets
 _C_FAMILY = {
@@ -64,6 +74,17 @@ _C_FAMILY = {
     '.gradle',
 }
 _PYTHON = {'.py'}
+
+_C_STYLE_LANGUAGES = {
+    'C', 'C++', 'CUDA', 'OpenCL', 'Java', 'C#', 'Objective-C',
+    'Rust', 'Go', 'JavaScript', 'TypeScript', 'Kotlin', 'Scala',
+    'Swift', 'Dart', 'Groovy', 'PHP', 'WGSL shader', 'GLSL shader',
+    'HLSL shader',
+}
+_HASH_STYLE_LANGUAGES = {
+    'Python', 'Perl', 'Ruby', 'Shell', 'PowerShell', 'R', 'Julia',
+    'YAML', 'TOML', 'INI/config', 'Make/build',
+}
 
 # Noise identifiers to discard
 _NOISE = frozenset({
@@ -97,6 +118,9 @@ def compute_content_status(content1: str, content2: str, extension: str) -> str:
     'minor'     : differs only in whitespace / comments / ignored tokens
     'different' : functionally different code
     """
+    content1 = normalize_newlines(content1)
+    content2 = normalize_newlines(content2)
+
     if content1 == content2:
         return 'identical'
 
@@ -129,6 +153,9 @@ def compute_similarity(
         similarity_pct : float in [0, 100]
         confidence      : 'high' | 'medium' | 'low'
     """
+    content1 = normalize_newlines(content1)
+    content2 = normalize_newlines(content2)
+
     # Edge cases
     if not content1.strip() and not content2.strip():
         return 100.0, 'high'
@@ -192,12 +219,21 @@ def compute_similarity(
 # ===================================================================
 
 def _strip_comments(content: str, ext: str) -> str:
-    if ext in _C_FAMILY:
+    language = detect_text_profile('file' + ext, content).language
+    if language in _C_STYLE_LANGUAGES or ext in _C_FAMILY:
         content = _C_BLOCK_COMMENT.sub('', content)
         content = _C_LINE_COMMENT.sub('', content)
-    elif ext in _PYTHON:
-        content = _PY_BLOCK_STRING.sub('', content)
+    elif language in _HASH_STYLE_LANGUAGES or ext in _PYTHON:
+        if language == 'Python' or ext in _PYTHON:
+            content = _PY_BLOCK_STRING.sub('', content)
         content = _PY_LINE_COMMENT.sub('', content)
+    elif language in {'HTML', 'XML', 'Markdown'}:
+        content = _MARKUP_COMMENT.sub('', content)
+    elif language == 'SQL':
+        content = _C_BLOCK_COMMENT.sub('', content)
+        content = _SQL_LINE_COMMENT.sub('', content)
+    elif language in {'Assembly', 'Lisp'}:
+        content = _SEMI_LINE_COMMENT.sub('', content)
     return content
 
 
@@ -217,25 +253,36 @@ def _tokenize(text: str) -> list:
 
 def _extract_identifiers(content: str, ext: str) -> Set[str]:
     ids: Set[str] = set()
+    language = detect_text_profile('file' + ext, content).language
 
-    if ext in {'.java', '.cs', '.kt', '.kts', '.scala'}:
+    if language in {'Java', 'C#', 'Kotlin', 'Scala'}:
         ids.update(_JAVA_CLASS.findall(content))
         ids.update(_JAVA_METHOD.findall(content))
-    elif ext in {'.c', '.h', '.cpp', '.hpp', '.cc', '.hh', '.cxx', '.hxx'}:
+    elif language in {'C', 'C++', 'CUDA', 'OpenCL', 'Objective-C'}:
         ids.update(_JAVA_CLASS.findall(content))  # C++ classes
         ids.update(_C_FUNCTION.findall(content))
-    elif ext == '.rs':
+    elif language == 'Rust':
         ids.update(_RUST_FN.findall(content))
         ids.update(_RUST_STRUCT.findall(content))
         ids.update(_RUST_IMPL.findall(content))
-    elif ext == '.go':
+    elif language == 'Go':
         ids.update(_GO_FUNC.findall(content))
-    elif ext == '.py':
+    elif language == 'Python':
         ids.update(_PY_CLASS.findall(content))
         ids.update(_PY_DEF.findall(content))
-    elif ext in {'.js', '.jsx', '.ts', '.tsx'}:
+    elif language in {'JavaScript', 'TypeScript'}:
         ids.update(_JS_FUNC.findall(content))
         ids.update(_JS_CLASS.findall(content))
         ids.update(_JS_ARROW.findall(content))
+
+    # Every text format, including a custom or misleading extension,
+    # receives generic structure extraction as a final deterministic
+    # layer.  Markup element names and data keys are useful when code
+    # declarations do not exist.
+    ids.update(_GENERIC_DECL.findall(content))
+    if language in {'HTML', 'XML'}:
+        ids.update(_MARKUP_NAME.findall(content))
+    if language in {'JSON', 'YAML', 'TOML', 'INI/config'}:
+        ids.update(_DATA_KEY.findall(content))
 
     return ids - _NOISE

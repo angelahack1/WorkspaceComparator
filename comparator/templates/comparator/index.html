@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Workspace Comparator v1.5.0</title>
+  <title>Workspace Comparator v1.6.0</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { font-size: 14px; }
@@ -137,6 +137,9 @@
     .setting-name { font-weight: 600; font-size: 0.88rem; color: #1a1a2e; }
     .setting-val { font-family: "Consolas", "Courier New", monospace; font-size: 0.82rem; font-weight: 700; color: #fff; background: #4361ee; border-radius: 10px; padding: 0.1rem 0.6rem; min-width: 44px; text-align: center; box-shadow: 0 1px 3px rgba(67,97,238,0.4); }
     .setting-desc { font-size: 0.74rem; color: #778; line-height: 1.4; margin-bottom: 0.5rem; }
+    .charset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+    .charset-field label { display: block; color: #4b5563; font-size: 0.72rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .charset-field select { width: 100%; height: 34px; border: 1px solid #cbd3e1; border-radius: 5px; background: #fff; color: #1f2937; padding: 0 0.5rem; font-family: "Consolas", "Courier New", monospace; }
     .setting-ctrl { display: flex; align-items: center; gap: 0.7rem; }
     .setting-ctrl input[type="range"] { flex: 1; accent-color: #4361ee; cursor: pointer; }
     .setting-num { width: 74px; padding: 4px 8px; border: 1px solid #d5dae2; border-radius: 5px; font-family: "Consolas", monospace; font-size: 0.85rem; text-align: right; outline: none; }
@@ -151,15 +154,15 @@
     .excl-box .modal-top { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #1b2b4d 100%); border-bottom: 2px solid #e74c3c; }
     .excl-intro { padding: 0.7rem 1.3rem; font-size: 0.76rem; color: #667; background: #f4f6fb; border-bottom: 1px solid #e2e6ee; line-height: 1.5; }
     .excl-intro code { background: #e8ecf5; border: 1px solid #d5dae5; border-radius: 3px; padding: 0 4px; font-size: 0.74rem; }
-    .excl-columns { display: flex; gap: 0.9rem; padding: 0.9rem 1.3rem; overflow-y: auto; }
-    .excl-col { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid #e2e6ee; border-radius: 10px; background: linear-gradient(180deg, #fbfcfe, #f4f6fb); overflow: hidden; }
+    .excl-columns { display: flex; flex: 1 1 320px; min-height: 180px; gap: 0.9rem; padding: 0.9rem 1.3rem; overflow: hidden; }
+    .excl-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid #e2e6ee; border-radius: 10px; background: linear-gradient(180deg, #fbfcfe, #f4f6fb); overflow: hidden; }
     .excl-col-head { padding: 0.5rem 0.8rem; font-size: 0.82rem; font-weight: 700; color: #fff; background: #2a5d8f; letter-spacing: 0.4px; }
     .excl-addrow { display: flex; gap: 0.4rem; padding: 0.55rem 0.7rem; border-bottom: 1px solid #e2e6ee; background: #fff; }
     .excl-addrow input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d5dae2; border-radius: 5px; font-family: "Consolas", monospace; font-size: 0.82rem; outline: none; }
     .excl-addrow input:focus { border-color: #4361ee; box-shadow: 0 0 0 3px rgba(67,97,238,0.15); }
     .excl-addrow button { padding: 4px 12px; border: none; border-radius: 5px; background: #4361ee; color: #fff; font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
     .excl-addrow button:hover { background: #3a56d4; }
-    .excl-list { min-height: 130px; max-height: 240px; overflow-y: auto; }
+    .excl-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
     .excl-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.8rem; border-bottom: 1px solid #eef1f6; }
     .excl-item:hover { background: #eef3fb; }
     .excl-switch { width: 30px; height: 16px; border-radius: 8px; background: #4361ee; position: relative; cursor: pointer; flex-shrink: 0; transition: background 0.15s; box-shadow: inset 0 1px 2px rgba(0,0,0,0.2); }
@@ -171,6 +174,8 @@
     .excl-del { border: none; background: none; color: #c0392b; font-size: 1.05rem; line-height: 1; cursor: pointer; padding: 0 4px; flex-shrink: 0; opacity: 0.55; }
     .excl-del:hover { opacity: 1; }
     .excl-empty { padding: 1.4rem 0.8rem; text-align: center; color: #aab; font-size: 0.78rem; font-style: italic; }
+    .excl-show-option { display: inline-flex; align-items: center; gap: 0.45rem; color: #374151; font-size: 0.82rem; font-weight: 600; cursor: pointer; user-select: none; }
+    .excl-show-option input { width: 16px; height: 16px; margin: 0; accent-color: #4361ee; cursor: pointer; }
 
     @media (max-width: 900px) {
       .input-section { flex-direction: column; }
@@ -181,7 +186,7 @@
 <body>
 
   <header class="app-header">
-    <h1>Workspace Comparator <span class="app-ver">v1.5.0</span></h1>
+    <h1>Workspace Comparator <span class="app-ver">v1.6.0</span></h1>
     <p class="subtitle">Intelligent source-code file correspondence engine</p>
   </header>
 
@@ -291,6 +296,36 @@
 
           <div class="setting-row">
             <div class="setting-head">
+              <span class="setting-name">Text charset by side</span>
+              <span class="setting-val">AUTO</span>
+            </div>
+            <div class="setting-desc">Auto detects each file independently. Override one side only when a legacy charset is ambiguous. Binary content remains binary regardless of this setting.</div>
+            <div class="charset-grid">
+              <div class="charset-field">
+                <label for="charsetLeft">Left workspace</label>
+                <select id="charsetLeft">
+                  <option value="auto">Auto detect</option><option value="utf-8">UTF-8</option><option value="utf-8-sig">UTF-8 with BOM</option>
+                  <option value="utf-16">UTF-16 with BOM</option><option value="utf-16-le">UTF-16 LE</option><option value="utf-16-be">UTF-16 BE</option>
+                  <option value="utf-32">UTF-32 with BOM</option><option value="utf-32-le">UTF-32 LE</option><option value="utf-32-be">UTF-32 BE</option>
+                  <option value="cp1252">Windows-1252</option><option value="latin-1">Latin-1</option><option value="ascii">ASCII</option>
+                  <option value="shift_jis">Shift-JIS</option><option value="gb18030">GB18030</option><option value="big5">Big5</option><option value="euc-kr">EUC-KR</option>
+                </select>
+              </div>
+              <div class="charset-field">
+                <label for="charsetRight">Right workspace</label>
+                <select id="charsetRight">
+                  <option value="auto">Auto detect</option><option value="utf-8">UTF-8</option><option value="utf-8-sig">UTF-8 with BOM</option>
+                  <option value="utf-16">UTF-16 with BOM</option><option value="utf-16-le">UTF-16 LE</option><option value="utf-16-be">UTF-16 BE</option>
+                  <option value="utf-32">UTF-32 with BOM</option><option value="utf-32-le">UTF-32 LE</option><option value="utf-32-be">UTF-32 BE</option>
+                  <option value="cp1252">Windows-1252</option><option value="latin-1">Latin-1</option><option value="ascii">ASCII</option>
+                  <option value="shift_jis">Shift-JIS</option><option value="gb18030">GB18030</option><option value="big5">Big5</option><option value="euc-kr">EUC-KR</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-head">
               <span class="setting-name">Max LLM candidates per file</span>
               <span class="setting-val" id="valMaxLlm">3</span>
             </div>
@@ -345,7 +380,7 @@
           <button class="modal-x" data-action="exclusions-close" type="button">&times;</button>
         </div>
         <div class="excl-intro">
-          Matching files and folders are not compared, but they still stay visible in the Ignored Files section.
+          Matching files and folders are not compared. Keep <strong>Show excluded</strong> checked to retain them in the Ignored Files section, or uncheck it to hide them from the table.
           Wildcards: <code>*</code> (any text) and <code>?</code> (one character). Plain patterns match the <strong>name</strong> anywhere in the tree
           (e.g. <code>*.min.js</code>, <code>generated</code>); patterns with <code>/</code> match the <strong>relative path</strong> (e.g. <code>docs/internal</code>, <code>src/*/legacy</code>).
           Use the switch to disable a pattern without deleting it.
@@ -370,6 +405,10 @@
         </div>
         <div class="settings-bottom">
           <button class="btn-reset" data-action="exclusions-clear" type="button">Clear All</button>
+          <label class="excl-show-option" for="showExcluded">
+            <input type="checkbox" id="showExcluded" value="show-excluded" checked>
+            <span>Show excluded</span>
+          </label>
           <span class="spacer"></span>
           <button class="modal-ok" data-action="exclusions-accept" type="button">Accept</button>
           <button class="modal-cancel" data-action="exclusions-close" type="button">Cancel</button>
@@ -392,7 +431,8 @@
     matchSorted: false,   // toggle: false = original, true = sorted by status
     comparing: false,     // true while a comparison request is in flight
     settings: {},         // engine settings sent with each compare request
-    exclusions: { files: [], dirs: [] },  // [{pat, on}] committed patterns
+    charsets: { left: "auto", right: "auto" },
+    exclusions: { files: [], dirs: [], showExcluded: true },
     exclDraft: null       // working copy while the Exclusions dialog is open
   };
 
@@ -438,6 +478,12 @@
     while (node && node !== document) {
       var action = node.getAttribute ? node.getAttribute("data-action") : null;
       if (action) {
+        // Backdrops are actionable only when the backdrop itself was clicked.
+        // Descendant form controls must keep their native default behavior.
+        if (/-backdrop$/.test(action) && e.target !== node) {
+          node = node.parentNode;
+          continue;
+        }
         e.preventDefault();
         handleAction(action, node, e);
         return;
@@ -459,15 +505,17 @@
     if (!row) return;
 
     var unmatchedSide = row.getAttribute("data-unmatched-side");
+    var leftEncoding = row.getAttribute("data-left-encoding") || "auto";
+    var rightEncoding = row.getAttribute("data-right-encoding") || "auto";
     if (unmatchedSide) {
       // Unmatched file - open single-file view
       var filePath = row.getAttribute("data-left-path") || row.getAttribute("data-right-path");
       if (filePath) {
         var url = "/file-compare/?";
         if (unmatchedSide === "left") {
-          url += "left=" + encodeURIComponent(filePath) + "&right=&unmatched=left";
+          url += "left=" + encodeURIComponent(filePath) + "&right=&unmatched=left&left_encoding=" + encodeURIComponent(leftEncoding);
         } else {
-          url += "left=&right=" + encodeURIComponent(filePath) + "&unmatched=right";
+          url += "left=&right=" + encodeURIComponent(filePath) + "&unmatched=right&right_encoding=" + encodeURIComponent(rightEncoding);
         }
         window.open(url, "_blank");
       }
@@ -478,7 +526,9 @@
       if (leftPath && rightPath) {
         window.open(
           "/file-compare/?left=" + encodeURIComponent(leftPath) +
-          "&right=" + encodeURIComponent(rightPath),
+          "&right=" + encodeURIComponent(rightPath) +
+          "&left_encoding=" + encodeURIComponent(leftEncoding) +
+          "&right_encoding=" + encodeURIComponent(rightEncoding),
           "_blank"
         );
       }
@@ -633,6 +683,10 @@
       var v = (saved[d.key] !== undefined) ? parseFloat(saved[d.key]) : d.def;
       APP.settings[d.key] = clampSetting(d, v);
     }
+    var charsets = {};
+    try { charsets = JSON.parse(localStorage.getItem("wcTextCharsets") || "{}"); } catch (e2) { charsets = {}; }
+    APP.charsets.left = charsets.left || "auto";
+    APP.charsets.right = charsets.right || "auto";
   }
 
   function syncSettingRow(d, v) {
@@ -648,6 +702,8 @@
     for (var i = 0; i < SETTINGS_DEF.length; i++) {
       syncSettingRow(SETTINGS_DEF[i], APP.settings[SETTINGS_DEF[i].key]);
     }
+    document.getElementById("charsetLeft").value = APP.charsets.left;
+    document.getElementById("charsetRight").value = APP.charsets.right;
     document.getElementById("settingsModal").style.display = "block";
   }
 
@@ -659,6 +715,8 @@
     for (var i = 0; i < SETTINGS_DEF.length; i++) {
       syncSettingRow(SETTINGS_DEF[i], SETTINGS_DEF[i].def);
     }
+    document.getElementById("charsetLeft").value = "auto";
+    document.getElementById("charsetRight").value = "auto";
   }
 
   function acceptSettings() {
@@ -666,7 +724,10 @@
       var d = SETTINGS_DEF[i];
       APP.settings[d.key] = clampSetting(d, parseFloat(document.getElementById(d.num).value));
     }
+    APP.charsets.left = document.getElementById("charsetLeft").value || "auto";
+    APP.charsets.right = document.getElementById("charsetRight").value || "auto";
     try { localStorage.setItem("wcEngineSettings", JSON.stringify(APP.settings)); } catch (e) {}
+    try { localStorage.setItem("wcTextCharsets", JSON.stringify(APP.charsets)); } catch (e2) {}
     closeSettings();
     toast("Engine settings applied — they will be used on the next comparison.", true);
   }
@@ -689,8 +750,9 @@
   function loadExclusions() {
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem("wcExclusions") || "null"); } catch (e) { saved = null; }
-    APP.exclusions = { files: [], dirs: [] };
+    APP.exclusions = { files: [], dirs: [], showExcluded: true };
     if (saved) {
+      APP.exclusions.showExcluded = saved.showExcluded !== false;
       ["files", "dirs"].forEach(function(side) {
         (saved[side] || []).forEach(function(item) {
           if (item && typeof item.pat === "string" && item.pat.trim()) {
@@ -734,6 +796,7 @@
     APP.exclDraft = JSON.parse(JSON.stringify(APP.exclusions));
     document.getElementById("exclFileInput").value = "";
     document.getElementById("exclDirInput").value = "";
+    document.getElementById("showExcluded").checked = APP.exclDraft.showExcluded !== false;
     renderExclLists();
     document.getElementById("exclusionsModal").style.display = "block";
   }
@@ -773,7 +836,11 @@
 
   function clearExclusionsDraft() {
     if (!APP.exclDraft) return;
-    APP.exclDraft = { files: [], dirs: [] };
+    APP.exclDraft = {
+      files: [],
+      dirs: [],
+      showExcluded: document.getElementById("showExcluded").checked
+    };
     renderExclLists();
   }
 
@@ -782,13 +849,16 @@
     // Adopt anything still typed into the inputs but not yet added
     exclAdd("files");
     exclAdd("dirs");
+    APP.exclDraft.showExcluded = document.getElementById("showExcluded").checked;
     APP.exclusions = APP.exclDraft;
     APP.exclDraft = null;
     try { localStorage.setItem("wcExclusions", JSON.stringify(APP.exclusions)); } catch (e) {}
     document.getElementById("exclusionsModal").style.display = "none";
+    if (APP.lastData) renderCurrentResults();
     var act = activeExclusions();
     toast("Exclusions applied — " + act.files.length + " file pattern(s), " +
-          act.dirs.length + " folder pattern(s) active for the next comparison.", true);
+          act.dirs.length + " folder pattern(s) active; excluded rows " +
+          (APP.exclusions.showExcluded ? "shown." : "hidden."), true);
   }
 
   // Enter in a pattern input adds it
@@ -837,7 +907,7 @@
     fetch("/api/compare/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ left_dir: left, right_dir: right, settings: APP.settings, exclusions: activeExclusions() })
+      body: JSON.stringify({ left_dir: left, right_dir: right, settings: APP.settings, exclusions: activeExclusions(), charsets: APP.charsets })
     })
     .then(function(r) {
       if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || "Error"); });
@@ -899,7 +969,7 @@
                           m.match_type === "content" ? '<span class="match-method">Renamed</span>' :
                           m.match_type === "binary" ? '<span class="match-method">Moved</span>' : '';
         var binTag = m.binary ? '<span class="bin-tag" title="Binary file — compared byte-for-byte, opens in the hex viewer">BIN</span>' : '';
-        html += '<tr class="row-matched" title="Double-click to compare files" data-left-path="' + escAttr(m.left.full_path) + '" data-right-path="' + escAttr(m.right.full_path) + '">' +
+        html += '<tr class="row-matched" title="Double-click to compare files" data-left-path="' + escAttr(m.left.full_path) + '" data-right-path="' + escAttr(m.right.full_path) + '" data-left-encoding="' + escAttr(m.left.encoding || "auto") + '" data-right-encoding="' + escAttr(m.right.encoding || "auto") + '">' +
           '<td class="cell-left">' + esc(m.left.name) + '</td>' +
           '<td class="cell-left">' + esc(m.left.directory || ".") + '</td>' +
           '<td class="match-cell"><span class="status-sym ' + symClass + '">' + sym + '</span>' + binTag + methodLabel + '</td>' +
@@ -912,14 +982,15 @@
       html += sepRow("Unmatched Files (" + (unmL.length + unmR.length) + ")");
       var unmBinTag = '<span class="bin-tag" title="Binary file — opens in the hex viewer">BIN</span>';
       for (var j = 0; j < unmL.length; j++) {
-        html += '<tr class="row-unmatched" data-left-path="' + escAttr(unmL[j].full_path) + '" data-unmatched-side="left" title="Double-click to view file"><td class="cell-left-filled">' + esc(unmL[j].name) + '</td><td class="cell-left-filled">' + esc(unmL[j].directory || ".") + '</td><td class="match-cell"><span class="no-match-indicator">--</span>' + (unmL[j].binary ? unmBinTag : '') + '</td><td class="cell-empty"></td><td class="cell-empty"></td></tr>';
+        html += '<tr class="row-unmatched" data-left-path="' + escAttr(unmL[j].full_path) + '" data-left-encoding="' + escAttr(unmL[j].encoding || "auto") + '" data-unmatched-side="left" title="Double-click to view file"><td class="cell-left-filled">' + esc(unmL[j].name) + '</td><td class="cell-left-filled">' + esc(unmL[j].directory || ".") + '</td><td class="match-cell"><span class="no-match-indicator">--</span>' + (unmL[j].binary ? unmBinTag : '') + '</td><td class="cell-empty"></td><td class="cell-empty"></td></tr>';
       }
       for (var k = 0; k < unmR.length; k++) {
-        html += '<tr class="row-unmatched" data-right-path="' + escAttr(unmR[k].full_path) + '" data-unmatched-side="right" title="Double-click to view file"><td class="cell-empty"></td><td class="cell-empty"></td><td class="match-cell"><span class="no-match-indicator">--</span>' + (unmR[k].binary ? unmBinTag : '') + '</td><td class="cell-right-filled">' + esc(unmR[k].name) + '</td><td class="cell-right-filled">' + esc(unmR[k].directory || ".") + '</td></tr>';
+        html += '<tr class="row-unmatched" data-right-path="' + escAttr(unmR[k].full_path) + '" data-right-encoding="' + escAttr(unmR[k].encoding || "auto") + '" data-unmatched-side="right" title="Double-click to view file"><td class="cell-empty"></td><td class="cell-empty"></td><td class="match-cell"><span class="no-match-indicator">--</span>' + (unmR[k].binary ? unmBinTag : '') + '</td><td class="cell-right-filled">' + esc(unmR[k].name) + '</td><td class="cell-right-filled">' + esc(unmR[k].directory || ".") + '</td></tr>';
       }
     }
 
-    if (ignL.length > 0 || ignR.length > 0) {
+    var showExcluded = APP.exclusions.showExcluded !== false;
+    if (showExcluded && (ignL.length > 0 || ignR.length > 0)) {
       html += sepRow("Ignored Files (" + (ignL.length + ignR.length) + ")");
       for (var il = 0; il < ignL.length; il++) {
         var lr = ignL[il].ignored_reason || "Ignored by scanner";
@@ -937,8 +1008,11 @@
       }
     }
 
-    if (!matched.length && !unmL.length && !unmR.length && !ignL.length && !ignR.length) {
-      html = '<tr class="no-results-row"><td colspan="5">No source files found.</td></tr>';
+    if (!matched.length && !unmL.length && !unmR.length &&
+        (!showExcluded || (!ignL.length && !ignR.length))) {
+      html = '<tr class="no-results-row"><td colspan="5">' +
+        (showExcluded ? 'No files found.' : 'No comparable files found. Excluded files are hidden.') +
+        '</td></tr>';
     }
 
     body.innerHTML = html;
@@ -951,6 +1025,21 @@
   // ==============================================================
   var STATUS_ORDER = { "different": 0, "minor": 1, "identical": 2 };
 
+  function renderCurrentResults() {
+    if (!APP.lastData) return;
+    var data = APP.lastData;
+    if (APP.matchSorted) {
+      data = JSON.parse(JSON.stringify(APP.lastData));
+      data.matched.sort(function(a, b) {
+        var sa = STATUS_ORDER[a.content_status] !== undefined ? STATUS_ORDER[a.content_status] : 0;
+        var sb = STATUS_ORDER[b.content_status] !== undefined ? STATUS_ORDER[b.content_status] : 0;
+        if (sa !== sb) return sa - sb;
+        return a.left.name.toLowerCase().localeCompare(b.left.name.toLowerCase());
+      });
+    }
+    renderResults(data, true);
+  }
+
   document.getElementById("matchHdr").addEventListener("dblclick", function(e) {
     e.stopPropagation();
     if (!APP.lastData) return;
@@ -958,20 +1047,11 @@
     APP.matchSorted = !APP.matchSorted;
 
     if (APP.matchSorted) {
-      // Build sorted copy
-      var sorted = JSON.parse(JSON.stringify(APP.lastData));
-      sorted.matched.sort(function(a, b) {
-        var sa = STATUS_ORDER[a.content_status] !== undefined ? STATUS_ORDER[a.content_status] : 0;
-        var sb = STATUS_ORDER[b.content_status] !== undefined ? STATUS_ORDER[b.content_status] : 0;
-        if (sa !== sb) return sa - sb;
-        return a.left.name.toLowerCase().localeCompare(b.left.name.toLowerCase());
-      });
       document.getElementById("matchHdr").innerHTML = 'Match <span class="sort-arrow">&#9660;</span>';
-      renderResults(sorted, true);
     } else {
       document.getElementById("matchHdr").innerHTML = "Match";
-      renderResults(APP.lastData, true);
     }
+    renderCurrentResults();
   });
 
   function sepRow(label) {

@@ -21,11 +21,10 @@ Usage (from the repository root):
     python build.py --no-verify     skip the post-build smoke test
 
 Steps performed:
-    1. pip install -r requirements.txt   (django, requests)   [--skip-deps]
-    2. pip install pyinstaller                                [--skip-deps]
-    3. clean previous build/ and dist/ output
-    4. run PyInstaller in --onefile mode against launcher.py
-    5. smoke-test the exe: boot it on a spare port and verify the
+    1. pip install -r requirements.txt                       [--skip-deps]
+    2. clean previous build/ and dist/ output
+    3. run PyInstaller in --onefile mode against launcher.py
+    4. smoke-test the exe: boot it on a spare port and verify the
        embedded UI is the CURRENT one (settings/exclusions buttons
        present), so a stale-template bundle can never ship silently.
 """
@@ -59,6 +58,8 @@ HIDDEN_IMPORTS = [
     'comparator.services',
     'comparator.services.correspondence',
     'comparator.services.file_scanner',
+    'comparator.services.binary_detect',
+    'comparator.services.text_profile',
     'comparator.services.deterministic',
     'comparator.services.llm_comparator',
     'comparator.services.file_diff',
@@ -156,7 +157,7 @@ def verify_exe(exe_path: str) -> bool:
     """
     print()
     print('=' * 70)
-    print('  Step 5/5: Smoke-testing the executable')
+    print('  Step 4/4: Smoke-testing the executable')
     print('=' * 70)
     print(f'  launching {exe_path} on port {VERIFY_PORT} (no browser)')
 
@@ -214,18 +215,14 @@ def main() -> int:
         print('Skipping dependency installation (--skip-deps).')
     else:
         # 1. Project dependencies (for users building from a clean machine)
-        run_step('Step 1/5: Installing project requirements',
+        run_step('Step 1/4: Installing project requirements',
                  [py, '-m', 'pip', 'install', '-r',
                   os.path.join(ROOT, 'requirements.txt')])
 
-        # 2. PyInstaller itself
-        run_step('Step 2/5: Installing PyInstaller',
-                 [py, '-m', 'pip', 'install', 'pyinstaller'])
-
-    # 3. Clean old artifacts so the result is reproducible
+    # 2. Clean old artifacts so the result is reproducible
     clean_previous_output()
 
-    # 4. Build the single-file executable
+    # 3. Build the single-file executable
     templates_src = os.path.join(ROOT, 'comparator', 'templates')
     if not os.path.isdir(templates_src):
         print(f'ERROR: templates directory not found: {templates_src}')
@@ -247,7 +244,7 @@ def main() -> int:
         cmd += ['--hidden-import', mod]
     cmd.append(ENTRY_SCRIPT)
 
-    run_step('Step 4/5: Running PyInstaller (this takes a few minutes)', cmd)
+    run_step('Step 3/4: Running PyInstaller (this takes a few minutes)', cmd)
 
     exe_path = os.path.join(ROOT, 'dist', f'{APP_NAME}.exe')
     if not os.path.isfile(exe_path):

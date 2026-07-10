@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>File Compare · Workspace Comparator v1.5.0</title>
+  <title>File Compare · Workspace Comparator v1.6.0</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: "Segoe UI Variable", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; background: #eef1f5; color: #1a1a2e; }
@@ -196,6 +196,8 @@
   var LEFT_PATH = "{{ left_path|escapejs }}";
   var RIGHT_PATH = "{{ right_path|escapejs }}";
   var UNMATCHED_SIDE = "{{ unmatched_side|escapejs }}";
+  var LEFT_ENCODING = "{{ left_encoding|escapejs }}" || "auto";
+  var RIGHT_ENCODING = "{{ right_encoding|escapejs }}" || "auto";
   var FORCE_HEX = "{{ force_hex|escapejs }}" === "1";  // binary detected server-side: hex locked ON
 
   var DATA = null;        // raw text-mode response
@@ -275,19 +277,29 @@
     "defer map range select string bool").split(" ");
   var P_KW = ("and as assert async await break class continue def del elif else except finally for from global if " +
     "import in is lambda nonlocal not or pass raise return try while with yield None True False self match case").split(" ");
+  var EXTRA_KW = ("package include define typedef union enum interface record sub my our use strict warnings echo " +
+    "select insert update delete create alter table where join values kernel uniform storage vertex fragment compute").split(" ");
 
-  function langOf(path) {
+  function langOf(path, lines) {
     var ext = (path.split(".").pop() || "").toLowerCase();
+    var sample = (lines || []).slice(0, 80).join("\n");
     var kw = {}, i;
-    if (ext === "py") {
+    var pyExt = ",py,pyw,pyi,pyx,rb,pl,pm,r,sh,bash,zsh,fish,ps1,psm1,psd1,yaml,yml,toml,";
+    var cExt = ",java,js,jsx,mjs,cjs,ts,tsx,mts,cts,c,h,cpp,hpp,cc,hh,cxx,hxx,cu,cuh,cl,cs,go,rs,kt,kts,scala,swift,m,mm,gradle,php,dart,groovy,glsl,vert,frag,geom,comp,wgsl,hlsl,fx,jsp,jspx,";
+    var looksPython = /(^|\n)\s*(?:async\s+)?def\s+\w+\s*\(|(^|\n)#!.*\bpython\b/.test(sample);
+    var looksCStyle = /(^|\n)\s*(?:package\s+[\w.]+\s*;|#\s*include\s*[<"]|(?:public\s+)?(?:class|interface|struct|enum)\s+\w+)|\b__(?:global|device)__\b/.test(sample);
+    if (looksPython || pyExt.indexOf("," + ext + ",") >= 0) {
       for (i = 0; i < P_KW.length; i++) kw[P_KW[i]] = 1;
       return { kind: "py", kw: kw };
     }
-    if ("java,js,jsx,ts,tsx,c,h,cpp,hpp,cc,hh,cs,go,rs,kt,kts,scala,swift,m,mm,gradle".indexOf(ext) >= 0 && ext) {
+    if (looksCStyle || cExt.indexOf("," + ext + ",") >= 0) {
       for (i = 0; i < C_KW.length; i++) kw[C_KW[i]] = 1;
       return { kind: "c", kw: kw };
     }
-    return { kind: "plain", kw: {} };
+    for (i = 0; i < C_KW.length; i++) kw[C_KW[i]] = 1;
+    for (i = 0; i < P_KW.length; i++) kw[P_KW[i]] = 1;
+    for (i = 0; i < EXTRA_KW.length; i++) kw[EXTRA_KW[i]] = 1;
+    return { kind: "generic", kw: kw };
   }
 
   function hlLine(text, st, lang) {
@@ -345,11 +357,6 @@
   }
 
   function highlightAll(lines, lang) {
-    if (lang.kind === "plain") {
-      var plain = [];
-      for (var p = 0; p < lines.length; p++) plain.push(esc(lines[p]));
-      return plain;
-    }
     var st = { block: null }, out = [];
     for (var i = 0; i < lines.length; i++) out.push(hlLine(lines[i], st, lang));
     return out;
@@ -693,6 +700,8 @@
     if (UNMATCHED_SIDE) return;
     location.href = "/file-compare/?left=" + encodeURIComponent(RIGHT_PATH) +
                     "&right=" + encodeURIComponent(LEFT_PATH) +
+                    "&left_encoding=" + encodeURIComponent(RIGHT_ENCODING) +
+                    "&right_encoding=" + encodeURIComponent(LEFT_ENCODING) +
                     (HEX && !FORCE_HEX ? "&hex=1" : "");
   });
 
@@ -794,6 +803,8 @@
       url = "/api/file-diff/?left=" + encodeURIComponent(LEFT_PATH) +
             "&right=" + encodeURIComponent(RIGHT_PATH);
     }
+    url += "&left_encoding=" + encodeURIComponent(LEFT_ENCODING) +
+           "&right_encoding=" + encodeURIComponent(RIGHT_ENCODING);
     return url + (hex ? "&hex=1" : "");
   }
 
@@ -842,8 +853,8 @@
     } else {
       DATA = data;
       ROWS = data.rows || [];
-      LHL = highlightAll(data.left_lines || [], langOf(LEFT_PATH));
-      RHL = highlightAll(data.right_lines || [], langOf(RIGHT_PATH));
+      LHL = highlightAll(data.left_lines || [], langOf(LEFT_PATH, data.left_lines || []));
+      RHL = highlightAll(data.right_lines || [], langOf(RIGHT_PATH, data.right_lines || []));
       bm.classList.remove("fc-btn-disabled");
       bm.classList.toggle("fc-on", MINOR);
     }
@@ -888,7 +899,7 @@
       statTxt = "Unmatched " + (isBin ? "binary " : "") + "file &mdash; " + fmtSize(total) + ", no counterpart";
     } else {
       var lines = isLeft ? data.left_lines : data.right_lines;
-      var hl = highlightAll(lines, langOf(filePath));
+      var hl = highlightAll(lines, langOf(filePath, lines));
       for (var i = 0; i < lines.length; i++) {
         html += '<div class="fcl t-unm"><span class="g">' + (i + 1) + '</span><span class="c">' + (hl[i] || " ") + "</span></div>";
       }

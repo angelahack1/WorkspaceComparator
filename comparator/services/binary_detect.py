@@ -12,33 +12,31 @@ Binary File Detection & Byte-Level Helpers
 Decides whether a file is *binary* (non-text) and provides the cheap
 byte-level primitives the rest of the engine builds on.
 
-Detection is two-layered:
-  1. Extension fast-path -- files whose extension is in
-     BINARY_EXTENSIONS are binary by definition (no read needed).
-  2. Content sniff -- anything else is sampled (first 8 KB): a NUL
-     byte, or a heavy proportion of non-text control bytes, means
-     binary.  High bytes (0x80+) count as text so UTF-8 stays text;
-     UTF-16 files contain NULs and classify as binary (same rule git
-     uses).
+Detection is content-first.  Every extension, including an unknown or
+missing extension, is sampled.  BOMs and common BOM-less UTF-16/UTF-32
+layouts are recognized as text; otherwise NUL bytes or a heavy
+proportion of non-text control bytes mean binary.  The extension
+catalogue is only documentation/a useful hint for callers -- it never
+overrides bytes that are demonstrably text.
 
 Binary files are opaque to the text pipeline: no comment stripping, no
 identifier extraction, and **never** any LLM arbitration -- an LLM
 cannot judge two blobs of bytes.  They are matched by exact filename
 (directory path as the tie-break clue) and compared byte-for-byte.
 """
+import codecs
 import difflib
 import filecmp
 import logging
-import os
 from collections import Counter
-from typing import List
+from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Extensions that are binary by definition (never sniffed).  Note the
-# scanner's SKIP_DIRS already prunes build-output dirs (target/, bin/,
-# obj/...), so in practice these are *resource* artifacts: icons, jars
-# checked into lib folders, keystores, seed databases, fonts.
+# Common binary extensions.  This is deliberately NOT an allow/deny
+# list: is_binary_file() always inspects content, so a custom text file
+# named example.jar remains text and an unknown example.xyz containing
+# binary bytes remains binary.
 BINARY_EXTENSIONS = {
     # Images (SVG is XML -> text, deliberately absent)
     '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.tif', '.tiff',
@@ -66,38 +64,223 @@ _WEIRD_RATIO = 0.30         # more than this fraction of odd bytes -> binary
 _TEXT_BYTES = frozenset({7, 8, 9, 10, 11, 12, 13, 27}) \
     | frozenset(range(0x20, 0x7F)) | frozenset(range(0x80, 0x100))
 
+_BOM_ENCODINGS = (
+    (codecs.BOM_UTF32_LE, 'utf-32'),
+    (codecs.BOM_UTF32_BE, 'utf-32'),
+    (codecs.BOM_UTF8, 'utf-8-sig'),
+    (codecs.BOM_UTF16_LE, 'utf-16'),
+    (codecs.BOM_UTF16_BE, 'utf-16'),
+)
+
+SUPPORTED_TEXT_ENCODINGS = (
+    'auto',
+    'utf-8',
+    'utf-8-sig',
+    'utf-16',
+    'utf-16-le',
+    'utf-16-be',
+    'utf-32',
+    'utf-32-le',
+    'utf-32-be',
+    'cp1252',
+    'latin-1',
+    'ascii',
+    'shift_jis',
+    'gb18030',
+    'big5',
+    'euc-kr',
+)
+
+_ENCODING_ALIASES = {
+    'automatic': 'auto',
+    'utf8': 'utf-8',
+    'utf8-sig': 'utf-8-sig',
+    'utf16': 'utf-16',
+    'utf16le': 'utf-16-le',
+    'utf16be': 'utf-16-be',
+    'utf32': 'utf-32',
+    'utf32le': 'utf-32-le',
+    'utf32be': 'utf-32-be',
+    'windows-1252': 'cp1252',
+    'windows1252': 'cp1252',
+    'latin1': 'latin-1',
+    'iso-8859-1': 'latin-1',
+    'sjis': 'shift_jis',
+    'shift-jis': 'shift_jis',
+}
+
 # Byte-similarity estimation (Phase 2-BIN reporting only)
 BIN_SIM_CAP = 65536         # bytes per side fed into the estimate
 _CHUNK = 16                 # chunk width, matches the hex view rows
 _MAX_MATCH_COST = 8_000_000  # SequenceMatcher work bound (see _match_cost)
 
 
+def _zero_ratio(sample: bytes, offset: int, stride: int) -> float:
+    lane = sample[offset::stride]
+    return (lane.count(0) / len(lane)) if lane else 0.0
+
+
+def _unicode_text_encoding(sample: bytes):
+    """Return a likely Unicode encoding for NUL-bearing text."""
+    for bom, encoding in _BOM_ENCODINGS:
+        if sample.startswith(bom):
+            return encoding
+
+    if len(sample) >= 8:
+        lanes4 = [_zero_ratio(sample, i, 4) for i in range(4)]
+        if min(lanes4[1:]) > 0.60 and lanes4[0] < 0.20:
+            return 'utf-32-le'
+        if min(lanes4[:3]) > 0.60 and lanes4[3] < 0.20:
+            return 'utf-32-be'
+
+        even = _zero_ratio(sample, 0, 2)
+        odd = _zero_ratio(sample, 1, 2)
+        if odd > 0.45 and even < 0.20:
+            return 'utf-16-le'
+        if even > 0.45 and odd < 0.20:
+            return 'utf-16-be'
+    return None
+
+
+def _decodes_as_readable_text(sample: bytes, encoding: str) -> bool:
+    try:
+        text = sample.decode(encoding, errors='replace')
+    except (LookupError, UnicodeError):
+        return False
+    if not text:
+        return True
+    readable = sum(
+        1 for ch in text
+        if ch.isprintable() or ch in '\n\r\t\f\b'
+    )
+    return readable / len(text) >= 0.80
+
+
 def looks_binary_bytes(sample: bytes) -> bool:
-    """Heuristic: does this byte sample look like binary content?"""
+    """Heuristic: does this byte sample look like non-text content?"""
     if not sample:
         return False
-    if 0 in sample:           # NUL byte: the strongest binary signal
+
+    unicode_encoding = _unicode_text_encoding(sample)
+    if unicode_encoding and _decodes_as_readable_text(sample, unicode_encoding):
+        return False
+
+    if 0 in sample:
         return True
     weird = sum(1 for b in sample if b not in _TEXT_BYTES)
     return (weird / len(sample)) > _WEIRD_RATIO
 
 
-def is_binary_file(path: str, extension: str = None) -> bool:
-    """True when `path` is a binary (non-text) file.
+def normalize_text_encoding(value) -> str:
+    """Return a supported charset name, defaulting invalid values to auto."""
+    if not isinstance(value, str):
+        return 'auto'
+    key = value.strip().lower().replace('_', '-')[:40]
+    key = _ENCODING_ALIASES.get(key, key)
+    return key if key in SUPPORTED_TEXT_ENCODINGS else 'auto'
 
-    Extension fast-path first; unknown extensions are content-sniffed.
-    Unreadable files count as text (the rest of the pipeline already
-    degrades gracefully on read errors).
+
+def normalize_charsets(value) -> Dict[str, str]:
+    """Normalize the API/UI per-side charset override object."""
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        'left': normalize_text_encoding(value.get('left', 'auto')),
+        'right': normalize_text_encoding(value.get('right', 'auto')),
+    }
+
+
+def detect_text_encoding(sample: bytes) -> str:
+    """Best-effort encoding label for bytes already classified as text."""
+    unicode_encoding = _unicode_text_encoding(sample)
+    if unicode_encoding:
+        return unicode_encoding
+
+    try:
+        decoder = codecs.getincrementaldecoder('utf-8')('strict')
+        decoder.decode(sample, final=False)
+        return 'utf-8'
+    except UnicodeError:
+        pass
+
+    try:
+        sample.decode('cp1252')
+        return 'cp1252'
+    except UnicodeError:
+        return 'latin-1'
+
+
+def inspect_file(
+    path: str,
+    extension: str = None,
+    text_encoding: str = 'auto',
+) -> Tuple[bool, str]:
+    """Return (is_binary, effective_text_encoding) from actual content.
+
+    A charset override controls decoding only after the content has
+    passed the binary sniff.  It can never force a true binary into the
+    text or LLM pipeline.
     """
-    ext = extension if extension is not None else os.path.splitext(path)[1].lower()
-    if ext in BINARY_EXTENSIONS:
-        return True
+    _ = extension
     try:
         with open(path, 'rb') as fh:
             sample = fh.read(SNIFF_BYTES)
     except OSError:
-        return False
-    return looks_binary_bytes(sample)
+        return False, normalize_text_encoding(text_encoding)
+
+    if looks_binary_bytes(sample):
+        return True, ''
+    requested = normalize_text_encoding(text_encoding)
+    effective = detect_text_encoding(sample) if requested == 'auto' else requested
+    return False, effective
+
+
+def is_binary_file(path: str, extension: str = None) -> bool:
+    """True when `path` is a binary (non-text) file.
+
+    The extension argument is retained for API compatibility but never
+    gates comparison.  Every readable file is content-sniffed.  An
+    unreadable file counts as text so the rest of the pipeline can
+    report it without silently dropping it.
+    """
+    return inspect_file(path, extension)[0]
+
+
+def normalize_newlines(text: str) -> str:
+    """Canonicalize CRLF, CR, and LF to LF for logical text comparison."""
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+
+
+def decode_text_bytes(data: bytes, encoding: str = 'auto') -> str:
+    """Decode bytes already classified as text.
+
+    Unicode BOMs and common BOM-less UTF-16/32 layouts are handled
+    first.  The final Latin-1 fallback is lossless, which keeps unusual
+    legacy text visible and comparable.
+    """
+    requested = normalize_text_encoding(encoding)
+    effective = detect_text_encoding(data[:SNIFF_BYTES]) \
+        if requested == 'auto' else requested
+    if effective:
+        try:
+            text = data.decode(effective)
+        except UnicodeError:
+            try:
+                text = data.decode(effective, errors='replace')
+            except UnicodeError:
+                text = data.decode('latin-1')
+        return normalize_newlines(text)
+    return ''
+
+
+def read_text_file(path: str, encoding: str = 'auto') -> str:
+    """Read any text-mode file and normalize its line endings."""
+    try:
+        with open(path, 'rb') as fh:
+            return decode_text_bytes(fh.read(), encoding)
+    except OSError:
+        logger.warning("Unreadable text file skipped: %s", path)
+        return ''
 
 
 def bytes_equal(path_a: str, path_b: str) -> bool:

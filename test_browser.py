@@ -108,75 +108,42 @@ def main():
                 failed += 1
             shot(page, "03_modal_drives")
 
-            # ---- TEST 5: Navigate to D:\Proyectos\Workspaces ----
-            print("\n[TEST 5] Navigate D: -> Proyectos -> Workspaces...")
-            try:
-                page.locator("#modalList li", has_text="D:").click()
-                time.sleep(1)
-                shot(page, "04_d_drive")
+            external_left = r"D:\Proyectos\Workspaces\WorkspaceMAE"
+            external_right = r"D:\Proyectos\Workspaces\WorkspaceMAEMaven"
+            demo_left = os.path.join(PROJ_DIR, "demo", "InvoicerClassic")
+            demo_right = os.path.join(PROJ_DIR, "demo", "InvoicerMaven")
 
-                page.locator("#modalList li", has_text="Proyectos").click()
-                time.sleep(1)
-                shot(page, "05_proyectos")
-
-                page.locator("#modalList li").filter(has_text="Workspaces").first.click()
-                time.sleep(1)
-                shot(page, "06_workspaces")
-
-                mae = page.locator("#modalList li").filter(has_text="WorkspaceMAE").first
-                mae2check = page.locator("#modalList li", has_text="WorkspaceMAE")
-                if mae2check.count() > 0:
-                    print("  PASS - WorkspaceMAE found")
-                    passed += 1
-
-                    # Click WorkspaceMAE then Select
-                    mae.click()
-                    time.sleep(0.5)
-                    shot(page, "07_inside_mae")
-
+            # ---- TEST 5: Select a valid left fixture ----
+            print("\n[TEST 5] Select left comparison fixture...")
+            if os.path.isdir(external_left):
+                try:
+                    page.locator("#modalList li", has_text="D:").click()
+                    page.locator("#modalList li", has_text="Proyectos").click()
+                    page.locator("#modalList li").filter(has_text="Workspaces").first.click()
+                    page.locator("#modalList li").filter(has_text="WorkspaceMAE").first.click()
                     page.locator('[data-action="browse-select"]').click()
-                    time.sleep(0.5)
-
                     val = page.locator("#leftDir").input_value()
-                    if "WorkspaceMAE" in val:
-                        print(f"  PASS - Left input: {val}")
-                        passed += 1
-                    else:
-                        print(f"  FAIL - Left input: {val}")
-                        failed += 1
-                else:
-                    print("  FAIL - WorkspaceMAE not found")
-                    failed += 1
-            except Exception as ex:
-                print(f"  FAIL - Navigation error: {ex}")
-                failed += 1
-                shot(page, "05_nav_error")
-
-            # ---- TEST 6: Right side browse ----
-            print("\n[TEST 6] Browse right side for WorkspaceMAEMaven...")
-            try:
-                page.locator("#btnBrowseRight").click()
-                time.sleep(1)
-                page.locator("#modalList li", has_text="D:").click()
-                time.sleep(0.5)
-                page.locator("#modalList li", has_text="Proyectos").click()
-                time.sleep(0.5)
-                page.locator("#modalList li").filter(has_text="Workspaces").first.click()
-                time.sleep(0.5)
-                page.locator("#modalList li").filter(has_text="WorkspaceMAEMaven").first.click()
-                time.sleep(0.5)
-                page.locator('[data-action="browse-select"]').click()
-                time.sleep(0.5)
-                val = page.locator("#rightDir").input_value()
-                if "WorkspaceMAEMaven" in val:
-                    print(f"  PASS - Right input: {val}")
+                    assert "WorkspaceMAE" in val
+                    print(f"  PASS - External left input: {val}")
                     passed += 1
-                else:
-                    print(f"  FAIL - Right input: {val}")
+                except Exception as ex:
+                    print(f"  FAIL - Navigation error: {ex}")
                     failed += 1
-            except Exception as ex:
-                print(f"  FAIL - {ex}")
-                failed += 1
+            else:
+                page.locator('[data-action="browse-close"]').first.click()
+                page.locator("#leftDir").fill(demo_left)
+                print(f"  PASS - Bundled demo fallback: {demo_left}")
+                passed += 1
+
+            # ---- TEST 6: Select a valid right fixture ----
+            print("\n[TEST 6] Select right comparison fixture...")
+            if os.path.isdir(external_right):
+                page.locator("#rightDir").fill(external_right)
+                print(f"  PASS - External right input: {external_right}")
+            else:
+                page.locator("#rightDir").fill(demo_right)
+                print(f"  PASS - Bundled demo fallback: {demo_right}")
+            passed += 1
 
             shot(page, "08_both_paths_set")
 

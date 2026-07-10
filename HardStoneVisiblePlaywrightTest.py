@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 # Visible Playwright hard-stone regression test for Workspace Comparator.
 #
-# This test creates a 210-file dataset, opens a real Chromium window, and
-# proves that matched, unmatched, unsupported, excluded, dot-directory,
-# extensionless, and "." / ".." alias rows are all visible in the table.
+# This test creates a 234-file dataset, opens a real Chromium window, and
+# proves that every text extension is comparable, binaries use hex,
+# exclusions stay visible, charsets/newlines normalize, and "." / ".."
+# alias rows remain accounted for.
 #
 # Run:
 #   python HardStoneVisiblePlaywrightTest.py
@@ -100,6 +101,17 @@ def create_dataset(root: Path) -> dict:
         counts["matched"] += 1
         counts["disk_files"] += 2
 
+    # 10 exact compiled/archive binary matches. Their bytes, not their
+    # extensions, make them binary.
+    binary_exts = [".jar", ".war", ".zip", ".obj", ".o", ".wasm", ".class", ".bin", ".dat", ".apk"]
+    for i, ext in enumerate(binary_exts):
+        rel = Path("artifacts") / f"artifact_{i:03d}{ext}"
+        data = b"\x00\x01\x02BINARY\xff" + bytes([i]) * 32
+        write_bytes(left / rel, data)
+        write_bytes(right / rel, data)
+        counts["matched"] += 1
+        counts["disk_files"] += 2
+
     # 10 left-only and 10 right-only comparable files.  Use different
     # extensions so Phase 3b cannot content-match the artificial pairs.
     for i in range(10):
@@ -108,15 +120,33 @@ def create_dataset(root: Path) -> dict:
         counts["unmatched"] += 2
         counts["disk_files"] += 2
 
-    # 30 unsupported files per side.
-    unsupported_exts = [".md", ".json", ".html", ".css", ".svg"]
+    # 30 text files across common, exotic, custom, and misleading
+    # extensions. CRLF on the left and LF on the right must be ==.
+    text_exts = [
+        ".md", ".json", ".html", ".css", ".svg", ".cu", ".hpp", ".cuh",
+        ".wgsl", ".jsp", ".wat", ".proto", ".sql", ".ps1", ".exe",
+    ]
     for i in range(30):
-        ext = unsupported_exts[i % len(unsupported_exts)]
-        rel = Path("docs") / f"ignored_unsupported_{i:03d}{ext}"
-        write_text(left / rel, f"left unsupported {i}\n")
-        write_text(right / rel, f"right unsupported {i}\n")
-        counts["ignored_per_side"] += 1
+        ext = text_exts[i % len(text_exts)]
+        rel = Path("all_text_formats") / f"all_text_{i:03d}{ext}"
+        if ext == ".exe":
+            logical = f"package demo;\npublic class TextDisguisedAsExe{i} {{\n    int value() {{ return {i}; }}\n}}\n"
+        else:
+            logical = f"section format_{i}\nvalue = {i}\nshared logical text\n"
+        write_bytes(left / rel, logical.replace("\n", "\r\n").encode("utf-8"))
+        write_bytes(right / rel, logical.encode("utf-8"))
+        counts["matched"] += 1
         counts["disk_files"] += 2
+
+    # Same logical text with different charsets on each side.
+    mixed = "class EncodingProof {\n    String value = \"same\";\n}\n"
+    write_bytes(left / "charsets" / "mixed_utf.custom", mixed.replace("\n", "\r\n").encode("utf-16"))
+    write_bytes(right / "charsets" / "mixed_utf.custom", mixed.encode("utf-8"))
+    legacy = "name=caf\u00e9\nstatus=same\n"
+    write_bytes(left / "charsets" / "legacy_text.unknown", legacy.replace("\n", "\r\n").encode("cp1252"))
+    write_bytes(right / "charsets" / "legacy_text.unknown", legacy.encode("utf-8"))
+    counts["matched"] += 2
+    counts["disk_files"] += 4
 
     # 15 supported Java files ignored by file exclusion.
     for i in range(15):
@@ -143,19 +173,20 @@ def create_dataset(root: Path) -> dict:
         counts["ignored_per_side"] += 1
         counts["disk_files"] += 2
 
-    # 7 extensionless files per side.
+    # 7 extensionless text files per side; CRLF and LF are equivalent.
     for i in range(7):
         rel = Path("extensionless") / f"Dockerfile_{i:03d}"
-        write_text(left / rel, f"FROM scratch\n# left {i}\n")
-        write_text(right / rel, f"FROM scratch\n# right {i}\n")
-        counts["ignored_per_side"] += 1
+        logical = f"FROM scratch\nLABEL proof={i}\n"
+        write_bytes(left / rel, logical.replace("\n", "\r\n").encode("utf-8"))
+        write_bytes(right / rel, logical.encode("utf-8"))
+        counts["matched"] += 1
         counts["disk_files"] += 2
 
     # Scanner adds "." and ".." aliases per side as ignored rows.
     counts["ignored_per_side"] += 2
     counts["expected_ignored_total"] = counts["ignored_per_side"] * 2
-    counts["expected_total_left"] = 20 + 5 + 10 + (counts["ignored_per_side"])
-    counts["expected_total_right"] = 20 + 5 + 10 + (counts["ignored_per_side"])
+    counts["expected_total_left"] = counts["disk_files"] // 2 + 2
+    counts["expected_total_right"] = counts["disk_files"] // 2 + 2
     counts["left"] = str(left)
     counts["right"] = str(right)
     return counts
@@ -248,8 +279,8 @@ def main() -> int:
             v = VisualAsserter(page)
 
             page.goto(base + "/", wait_until="networkidle")
-            v.require("01 header shows Workspace Comparator v1.5.0",
-                      "v1.5.0" in page.locator(".app-header h1").inner_text())
+            v.require("01 header shows Workspace Comparator v1.6.0",
+                      "v1.6.0" in page.locator(".app-header h1").inner_text())
             v.require("02 compare button starts disabled",
                       page.locator("#btnCompare").is_disabled())
 
@@ -260,109 +291,181 @@ def main() -> int:
             page.locator("#numMaxLlm").press("Tab")
             v.require("04 max LLM candidates visible at zero",
                       page.locator("#numMaxLlm").input_value() == "0")
+            v.require("05 independent charset selectors are visible",
+                      page.locator("#charsetLeft").is_visible()
+                      and page.locator("#charsetRight").is_visible())
+            v.require("06 both charset selectors default to auto",
+                      page.locator("#charsetLeft").input_value() == "auto"
+                      and page.locator("#charsetRight").input_value() == "auto")
             page.locator("[data-action='settings-accept']").click()
-            v.require("05 settings modal closes after accept",
+            v.require("07 settings modal closes after accept",
                       page.locator("#settingsModal").evaluate("el => el.style.display") == "none")
 
             page.locator("#btnExclusions").click()
-            v.require("06 exclusions modal opens visibly",
+            v.require("08 exclusions modal opens visibly",
                       page.locator("#exclusionsModal").evaluate("el => el.style.display") == "block")
             page.locator("#exclFileInput").fill("*.blocked.java")
             page.locator("[data-action='excl-add-files']").click()
-            v.require("07 excluded file pattern is visible",
+            v.require("09 excluded file pattern is visible",
                       "*.blocked.java" in page.locator("#exclFileList").inner_text())
             page.locator("#exclDirInput").fill("excluded_dir,.ghost")
             page.locator("[data-action='excl-add-dirs']").click()
             dir_text = page.locator("#exclDirList").inner_text()
-            v.require("08 excluded directories are visible",
+            v.require("10 excluded directories are visible",
                       "excluded_dir" in dir_text and ".ghost" in dir_text)
+
+            page.locator("#exclFileInput").fill(
+                ",".join(f"scroll_file_{i:02d}.tmp" for i in range(35)))
+            page.locator("[data-action='excl-add-files']").click()
+            page.locator("#exclDirInput").fill(
+                ",".join(f"scroll_dir_{i:02d}" for i in range(35)))
+            page.locator("[data-action='excl-add-dirs']").click()
+            file_list = page.locator("#exclFileList")
+            dir_list = page.locator("#exclDirList")
+            v.require("11 large file exclusion list has its own scrollbar",
+                      file_list.evaluate("el => el.scrollHeight > el.clientHeight"),
+                      file_list)
+            v.require("12 large folder exclusion list has its own scrollbar",
+                      dir_list.evaluate("el => el.scrollHeight > el.clientHeight"),
+                      dir_list)
+            file_list.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+            dir_list.evaluate("el => { el.scrollTop = el.scrollHeight; }")
+            v.require("13 both exclusion lists scroll independently",
+                      file_list.evaluate("el => el.scrollTop > 0")
+                      and dir_list.evaluate("el => el.scrollTop > 0"))
+            v.require("14 Show excluded defaults to checked",
+                      page.locator("#showExcluded").is_checked(),
+                      page.locator("#showExcluded"))
             page.locator("[data-action='exclusions-accept']").click()
-            v.require("09 exclusions modal closes after accept",
+            v.require("15 exclusions modal closes after accept",
                       page.locator("#exclusionsModal").evaluate("el => el.style.display") == "none")
 
             page.locator("#leftDir").fill(counts["left"])
             page.locator("#rightDir").fill(counts["right"])
-            v.require("10 both dataset paths visible in inputs",
+            v.require("16 both dataset paths visible in inputs",
                       counts["left"] in page.locator("#leftDir").input_value()
                       and counts["right"] in page.locator("#rightDir").input_value())
-            v.require("11 compare button enables with both paths",
+            v.require("17 compare button enables with both paths",
                       not page.locator("#btnCompare").is_disabled())
 
             page.route("**/api/compare/", lambda route: (time.sleep(0.8), route.continue_()))
             page.locator("#btnCompare").click()
-            v.require("12 loading overlay appears visibly",
+            v.require("18 loading overlay appears visibly",
                       page.locator("#loadingOverlay").is_visible())
             page.locator("#resultsSection").wait_for(state="visible", timeout=60000)
             page.locator("#loadingOverlay").wait_for(state="hidden", timeout=60000)
-            v.require("13 results section is visible",
+            v.require("19 results section is visible",
                       page.locator("#resultsSection").is_visible())
-            v.require("14 stats bar is visible",
+            v.require("20 stats bar is visible",
                       page.locator("#statsBar").is_visible())
 
             matched_rows = page.locator("tr.row-matched").count()
             unmatched_rows = page.locator("tr.row-unmatched").count()
             ignored_rows = page.locator("tr.row-ignored").count()
-            v.require("15 matched row count is exact",
+            v.require("21 matched row count is exact",
                       matched_rows == counts["matched"])
-            v.require("16 unmatched row count is exact",
+            v.require("22 unmatched row count is exact",
                       unmatched_rows == counts["unmatched"])
-            v.require("17 ignored row count is exact",
+            v.require("23 ignored row count is exact",
                       ignored_rows == counts["expected_ignored_total"])
 
             labels = page.locator(".sep-label").all_inner_texts()
-            v.require("18 corresponding section label is visible",
+            v.require("24 corresponding section label is visible",
                       any("CORRESPONDING FILES" in label for label in labels),
                       page.locator(".sep-label").first)
-            v.require("19 unmatched section label is visible",
+            v.require("25 unmatched section label is visible",
                       any("UNMATCHED FILES" in label for label in labels))
-            v.require("20 ignored section label is visible",
+            v.require("26 ignored section label is visible",
                       any("IGNORED FILES" in label for label in labels))
 
-            v.require("21 green matched rows are visible",
+            v.require("27 green matched rows are visible",
                       page.locator("tr.row-matched").first.is_visible(),
                       page.locator("tr.row-matched").first)
-            v.require("22 red unmatched rows are visible",
+            v.require("28 red unmatched rows are visible",
                       page.locator("tr.row-unmatched").first.is_visible(),
                       page.locator("tr.row-unmatched").first)
-            v.require("23 dark gray ignored rows are visible",
+            v.require("29 dark gray ignored rows are visible",
                       page.locator("tr.row-ignored").first.is_visible(),
                       page.locator("tr.row-ignored").first)
 
             body_text = page.locator("#comparisonBody").inner_text()
-            v.require("24 unsupported extension reason is visible",
-                      "Unsupported extension: .md" in body_text
-                      or "Unsupported extension: .json" in body_text)
-            v.require("25 excluded file pattern reason is visible",
+            v.require("30 unsupported-extension rejection is gone",
+                      "Unsupported extension" not in body_text)
+            v.require("31 md cu hpp wgsl jsp text files are matched",
+                      all(page.locator("tr.row-matched", has_text=name).count() == 1 for name in [
+                          "all_text_000.md", "all_text_005.cu", "all_text_006.hpp",
+                          "all_text_008.wgsl", "all_text_009.jsp",
+                      ]),
+                      page.locator("tr.row-matched", has_text="all_text_000.md"))
+            disguised = page.locator("tr.row-matched", has_text="all_text_014.exe")
+            v.require("32 text Java content disguised as exe is matched as text",
+                      disguised.count() == 1 and disguised.locator(".bin-tag").count() == 0,
+                      disguised)
+            v.require("33 excluded file pattern reason is visible",
                       "Excluded file pattern" in body_text)
-            v.require("26 excluded directory pattern reason is visible",
+            v.require("34 excluded directory pattern reason is visible",
                       "Excluded directory pattern" in body_text)
-            v.require("27 dot alias reason is visible",
+            v.require("35 dot alias reason is visible",
                       "Directory alias (not a file)" in body_text)
-            v.require("28 dot directory file is visible",
+            v.require("36 dot directory file is visible",
                       ".ghost" in body_text)
-            v.require("29 extensionless file is visible",
-                      "Dockerfile_000" in body_text)
+            extensionless = page.locator("tr.row-matched", has_text="Dockerfile_000")
+            v.require("37 extensionless text file is matched",
+                      extensionless.count() == 1, extensionless)
+            mixed_charset = page.locator("tr.row-matched", has_text="mixed_utf.custom")
+            v.require("38 UTF-16 versus UTF-8 text is identical",
+                      mixed_charset.count() == 1
+                      and mixed_charset.locator(".status-identical").count() == 1,
+                      mixed_charset)
+            legacy_charset = page.locator("tr.row-matched", has_text="legacy_text.unknown")
+            v.require("39 Windows-1252 versus UTF-8 text is identical",
+                      legacy_charset.count() == 1
+                      and legacy_charset.locator(".status-identical").count() == 1,
+                      legacy_charset)
+            newline_row = page.locator("tr.row-matched", has_text="all_text_000.md")
+            v.require("40 CRLF versus LF is identical",
+                      newline_row.locator(".status-identical").count() == 1,
+                      newline_row)
 
             stat_text = page.locator("#statsBar").inner_text()
-            v.require("30 ignored stat badge is visible",
+            v.require("41 ignored stat badge is visible",
                       "Ignored" in stat_text
                       and str(counts["expected_ignored_total"]) in stat_text)
 
             page.locator("#matchHdr").dblclick()
-            v.require("31 match header sorting indicator appears",
+            v.require("42 match header sorting indicator appears",
                       page.locator("#matchHdr").inner_text().strip().startswith("Match"),
                       page.locator("#matchHdr"))
 
-            matched_first = page.locator("tr.row-matched").first
+            matched_first = page.locator("tr.row-matched", has_text="all_text_000.md")
             with context.expect_page(timeout=5000) as popup_info:
                 matched_first.dblclick()
             diff_page = popup_info.value
             diff_page.wait_for_load_state("networkidle")
             v.page = diff_page
-            v.require("32 double-click matched row opens file compare",
+            v.require("43 text row opens aligned file compare",
                       "File Compare" in diff_page.title()
                       and diff_page.locator("#panels").is_visible())
+            v.require("44 CRLF-only difference produces no changed rows",
+                      diff_page.evaluate("ROWS.every(function(r) { return r.t === 'eq'; })"))
             diff_page.close()
+            v.page = page
+
+            binary_row = page.locator("tr.row-matched", has_text="artifact_000.jar")
+            v.require("45 native binary row has BIN marker",
+                      binary_row.locator(".bin-tag").count() == 1,
+                      binary_row)
+            with context.expect_page(timeout=5000) as binary_popup:
+                binary_row.dblclick()
+            binary_page = binary_popup.value
+            binary_page.wait_for_load_state("networkidle")
+            binary_page.locator("[data-mode='all']").click()
+            v.page = binary_page
+            v.require("46 native binary opens locked hex viewer",
+                      binary_page.locator("#chkHex").is_checked()
+                      and binary_page.locator("#chkHex").is_disabled()
+                      and binary_page.locator("body.hexmode").count() == 1)
+            binary_page.close()
             v.page = page
 
             ignored_first = page.locator("tr.row-ignored").first
@@ -375,9 +478,32 @@ def main() -> int:
             except PlaywrightTimeoutError:
                 opened = False
             after_pages = len(context.pages)
-            v.require("33 double-click ignored row does not open compare",
+            v.require("47 double-click ignored row does not open compare",
                       not opened and after_pages == before_pages,
                       ignored_first)
+
+            page.locator("#btnExclusions").click()
+            page.locator("#showExcluded").uncheck()
+            page.locator("[data-action='exclusions-accept']").click()
+            hidden_labels = page.locator(".sep-label").all_inner_texts()
+            v.require("48 unchecked Show excluded hides every ignored table row",
+                      page.locator("tr.row-ignored").count() == 0
+                      and not any("IGNORED FILES" in label for label in hidden_labels))
+
+            page.locator("#btnExclusions").click()
+            stored_hidden = page.evaluate(
+                "JSON.parse(localStorage.getItem('wcExclusions')).showExcluded")
+            v.require("49 hidden excluded preference persists in the dialog",
+                      not page.locator("#showExcluded").is_checked()
+                      and stored_hidden is False,
+                      page.locator("#showExcluded"))
+            page.locator("#showExcluded").check()
+            page.locator("[data-action='exclusions-accept']").click()
+            restored_labels = page.locator(".sep-label").all_inner_texts()
+            v.require("50 checked Show excluded restores every ignored table row",
+                      page.locator("tr.row-ignored").count() == counts["expected_ignored_total"]
+                      and any("IGNORED FILES" in label for label in restored_labels),
+                      page.locator("tr.row-ignored").first)
 
             log("VISIBLE TEST SUMMARY")
             print(f"  passed: {v.passed}")

@@ -21,6 +21,8 @@ import re
 import logging
 import requests
 
+from .text_profile import build_dynamic_system_prompt, detect_text_profile
+
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE = "http://127.0.0.1:11434"
@@ -58,6 +60,13 @@ package renaming, build-system migration, framework upgrades).  Your
 job is to decide whether FILE A and FILE B are *the same logical
 component* -- that is, one is an evolved / migrated / refactored
 version of the other.
+
+Both inputs have been content-sniffed and are text.  Infer their
+language or data format from the content itself.  A filename extension
+may be unfamiliar, custom, absent, or misleading; never reject a file
+because its extension is unknown.  Source code, scripts, markup,
+configuration, manifests, documentation, shaders, and textual build
+artifacts are all valid inputs.
 
 EVALUATION RULES
 ----------------
@@ -124,6 +133,8 @@ def compare_with_llm(
     content_a: str,
     filename_b: str,
     content_b: str,
+    encoding_a: str = '',
+    encoding_b: str = '',
 ) -> int:
     """
     Ask the LLM to score the correspondence between two source files.
@@ -140,9 +151,12 @@ def compare_with_llm(
         filename_b=filename_b,
         content_b=_smart_truncate(content_b),
     )
+    profile_a = detect_text_profile(filename_a, content_a, encoding_a)
+    profile_b = detect_text_profile(filename_b, content_b, encoding_b)
+    system_prompt = build_dynamic_system_prompt(profile_a, profile_b)
 
     try:
-        data = _post_generate(prompt)
+        data = _post_generate(prompt, system_prompt)
         answer = (data.get("response") or "").strip()
         thinking = (data.get("thinking") or "").strip()
         logger.info("LLM raw answer for %s <-> %s: %r",
@@ -176,7 +190,7 @@ def compare_with_llm(
 _THINK_BLOCK = re.compile(r'<think>.*?(?:</think>|$)', re.DOTALL)
 
 
-def _post_generate(prompt: str) -> dict:
+def _post_generate(prompt: str, system_prompt: str) -> dict:
     """POST to Ollama /api/generate, disabling model 'thinking'.
 
     If the server rejects the "think" parameter (HTTP 400 on older
@@ -187,6 +201,7 @@ def _post_generate(prompt: str) -> dict:
 
     payload = {
         "model": MODEL_NAME,
+        "system": system_prompt,
         "prompt": prompt,
         "stream": False,
         "options": {

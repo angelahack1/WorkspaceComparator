@@ -1,2 +1,9 @@
+# Application runtime
 django>=4.2,<6.0
 requests>=2.31.0
+
+# Browser regression suites (Chromium is installed separately)
+playwright>=1.52,<2.0
+
+# Standalone Windows release builder
+pyinstaller>=6.18,<7.0

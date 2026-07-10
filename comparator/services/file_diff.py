@@ -44,7 +44,13 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
-from .binary_detect import bytes_equal, is_binary_file, match_cost, read_head
+from .binary_detect import (
+    bytes_equal,
+    is_binary_file,
+    match_cost,
+    read_head,
+    read_text_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,22 +67,9 @@ HEX_VIEW_MAX_BYTES = 131072   # 128 KB rendered per side; the rest is reported, 
 _HEX_MAX_MATCH_COST = 8_000_000  # SequenceMatcher work bound -> offset pairing fallback
 
 
-def _read_file(path: str) -> str:
-    """Read a file with encoding fallback.
-
-    Returns '' when the file is undecodable OR unreadable (vanished /
-    permission-denied) -- mirrors correspondence.py; keep both in sync.
-    """
-    for enc in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
-        try:
-            with open(path, 'r', encoding=enc) as fh:
-                return fh.read()
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-        except OSError:
-            logger.warning("Unreadable file skipped: %s", path)
-            return ''
-    return ''
+def _read_file(path: str, encoding: str = 'auto') -> str:
+    """Read any content-sniffed text file, regardless of extension."""
+    return read_text_file(path, encoding)
 
 
 def _file_meta(path: str) -> Dict[str, Any]:
@@ -241,7 +234,12 @@ def _align_replace(ll, rl, i1, i2, j1, j2) -> List[Dict[str, Any]]:
 # Public API
 # ===================================================================
 
-def compute_file_diff(left_path: str, right_path: str) -> Dict[str, Any]:
+def compute_file_diff(
+    left_path: str,
+    right_path: str,
+    left_encoding: str = 'auto',
+    right_encoding: str = 'auto',
+) -> Dict[str, Any]:
     """
     Compute an aligned, BeyondCompare-style diff between two files.
 
@@ -251,8 +249,8 @@ def compute_file_diff(left_path: str, right_path: str) -> Dict[str, Any]:
       - left_meta / right_meta   : {size, mtime} for the file info bars
       - left_path / right_path
     """
-    left_lines = _read_file(left_path).splitlines(keepends=False)
-    right_lines = _read_file(right_path).splitlines(keepends=False)
+    left_lines = _read_file(left_path, left_encoding).splitlines(keepends=False)
+    right_lines = _read_file(right_path, right_encoding).splitlines(keepends=False)
 
     sm = difflib.SequenceMatcher(None, left_lines, right_lines, autojunk=False)
 
@@ -276,6 +274,8 @@ def compute_file_diff(left_path: str, right_path: str) -> Dict[str, Any]:
         'rows': rows,
         'left_path': left_path,
         'right_path': right_path,
+        'left_encoding': left_encoding,
+        'right_encoding': right_encoding,
         'left_meta': _file_meta(left_path),
         'right_meta': _file_meta(right_path),
     }
