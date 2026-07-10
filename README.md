@@ -20,7 +20,7 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
   <img src="https://img.shields.io/badge/LICENSE-MIT-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="License MIT">
 </p>
 
-<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.6 results: all-extension matched files in green, unmatched files in red, visible ignored rows, binary and matching statistics">
+<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.6 results: all-extension matched files in green, unmatched files in red, default-visible ignored rows controlled by Show excluded, binary and matching statistics">
 
 </div>
 
@@ -32,7 +32,7 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 - 🤖 **Content-aware AI arbitration** *(optional)* — ambiguous text pairs get a dynamic Ollama system prompt based on detected language/format and charset, even when an extension is custom, absent, or misleading. No Ollama running? The tool falls back to deterministic matching.
 - 🔢 **True binary files, compared in hex** — actual bytes, not extensions, decide binary status. Native binaries are matched deterministically by exact filename (directory path is the tie-break clue; AI never receives bytes) and open in a locked colored hex viewer.
 - 🔤 **Charset and newline aware** — per-file auto detection handles UTF-8, UTF-16/32 and legacy text, with optional left/right charset overrides. `CRLF`, `LF`, and `CR` are normalized before matching and diffing.
-- ⚙️ **Settings** & 🚫 **Exclusions** dialogs tune matching, select per-side charsets, and control exclusions. Large file/folder pattern lists scroll independently, and **Show excluded** hides or restores ignored table rows without rerunning the comparison.
+- ⚙️ **Settings** & 🚫 **Exclusions** dialogs tune matching, select per-side charsets, and control exclusions. Large file/folder pattern lists scroll independently. **Show excluded** starts checked, persists with the patterns, and hides or restores ignored table rows without rescanning or rerunning the comparison.
 
 ## 🧭 How v1.6.0 treats every filesystem entry
 
@@ -81,7 +81,8 @@ you're finished.
 
 **1.** Pick your two folders (type the paths or browse 📁) and hit **Compare**.
 **2.** Read the verdict: green joined rows correspond, red rows lack a counterpart, and dark-gray rows are explicit exclusions or directory aliases when **Show excluded** is enabled.
-**3.** **Double-click a matched or unmatched row** to open the side-by-side or single-file viewer. Ignored rows deliberately stay inert:
+**3.** Use **Exclusions** to maintain file and folder patterns. Each pattern list has its own scrollbar; Accept commits the draft, while Cancel discards it. Toggling **Show excluded** and accepting re-renders an existing result immediately.
+**4.** **Double-click a matched or unmatched row** to open the side-by-side or single-file viewer. Ignored rows, when shown, deliberately stay inert:
 
 <div align="center">
 <img src="docs/screenshots/04-diff-viewer.png" width="100%" alt="Beyond Compare-style diff viewer: content-aligned rows, word-level change highlights, hatched gaps, minimap and context folding">
@@ -126,8 +127,10 @@ The compare API accepts the same controls used by the GUI:
 }
 ```
 
-Excluded files remain in `ignored_left` / `ignored_right`; effective settings, exclusions and
-charsets are echoed in `stats`.
+Excluded files always remain in the API's `ignored_left` / `ignored_right`; effective settings,
+exclusions and charsets are echoed in `stats`. **Show excluded** is deliberately not an API input:
+it is a presentation-only preference persisted in `localStorage["wcExclusions"].showExcluded`, so
+hiding rows never changes scanning, matching, ignored counts, or the response payload.
 
 ## 🧱 Visible hard-stone test
 

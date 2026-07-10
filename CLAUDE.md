@@ -86,7 +86,7 @@ WorkspaceComparator/
 ├── docs/screenshots/             # README screenshots
 ├── test_browser.py               # Headless Playwright smoke test (port 9876)
 ├── AutomatedTestsStarter.py      # Visible Playwright full test (port 9877, slow-mo)
-├── HardStoneVisiblePlaywrightTest.py # Portable visible 234-file / 43-check regression
+├── HardStoneVisiblePlaywrightTest.py # Portable visible 234-file / 50-check regression
 └── test_screenshots/             # Output PNGs from the test scripts (gitignored)
 ```
 
@@ -99,7 +99,7 @@ WorkspaceComparator/
 This is the heart of the app. Entry point: `comparator/services/correspondence.py :: find_correspondences(left_dir, right_dir)`.
 
 ### Step 0 — Scan (`file_scanner.py`)
-`scan_directory()` walks every directory and returns every real file, including dot directories, build outputs, unknown extensions, and extensionless names. `inspect_file()` content-sniffs each file and records either `is_binary=True` or an effective text charset. No extension is unsupported and `SKIP_DIRS` is historical only. User exclusions (`{'files': [...], 'dirs': [...]}`) are non-destructive: matching files remain in the report as ignored dark-gray rows. Patterns containing `/` match forward-slash relative paths; plain patterns match basenames anywhere. The scanner also adds explicit ignored `.` and `..` directory aliases.
+`scan_directory()` walks every directory and returns every real file, including dot directories, build outputs, unknown extensions, and extensionless names. `inspect_file()` content-sniffs each file and records either `is_binary=True` or an effective text charset. No extension is unsupported and `SKIP_DIRS` is historical only. User exclusions (`{'files': [...], 'dirs': [...]}`) are non-destructive: matching files remain in the result's ignored collections and are never compared. The UI renders them as dark-gray rows only when **Show excluded** is checked. Patterns containing `/` match forward-slash relative paths; plain patterns match basenames anywhere. The scanner also adds explicit ignored `.` and `..` directory aliases.
 
 ### Content kind, charset, and newline rules (`binary_detect.py`)
 - **Content is authoritative.** `inspect_file()` samples the first 8192 bytes. A recognized Unicode text layout stays text; otherwise NUL bytes or a high control-byte ratio classify native binary. `BINARY_EXTENSIONS` is a descriptive catalogue only and never overrides textual bytes.
@@ -119,7 +119,7 @@ Matching is **greedy and order-dependent**. Files start "free"; once matched, bo
 - **Phase 3b — Renamed files (content-only).** Text leftovers are swept across any extension. Deterministic similarity `>= CONTENT_SIM_THRESHOLD` produces a content match; otherwise the best bounded candidates can reach the LLM. A cheap length-ratio bound prunes the O(L·R) sweep first. Binaries never enter this phase.
 - **Phase 4 — Leftovers.** Everything still free is reported as `unmatched_left` / `unmatched_right`.
 
-Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, `ignored_left`, and `ignored_right`, plus stats for total/comparable/ignored files, exact/deterministic/binary/LLM matches, LLM calls, effective engine settings, exclusions, and charsets. Sorting anchors on the **left side** (the user's original project): primary key = left filename, secondary key = left directory. Unmatched and ignored lists sort independently by filename then directory.
+Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, `ignored_left`, and `ignored_right`, plus stats for total/comparable/ignored files, exact/deterministic/binary/LLM matches, LLM calls, effective engine settings, exclusions, and charsets. `showExcluded` is not part of this service contract; it is a client-only rendering preference, so ignored entries and counts remain complete even when their table section is hidden. Sorting anchors on the **left side** (the user's original project): primary key = left filename, secondary key = left directory. Unmatched and ignored lists sort independently by filename then directory.
 
 ### Tunable thresholds (top of `correspondence.py`)
 ```python
@@ -207,7 +207,7 @@ Honesty guarantees: `identical` is computed on the **whole files** (`bytes_equal
 | Method | Path | View | Purpose |
 |---|---|---|---|
 | GET | `/` | `index` | Render main comparison page |
-| POST | `/api/compare/` | `compare` | Body `{left_dir, right_dir, settings?, exclusions?, charsets?}` → matched/unmatched/ignored/stats JSON. `charsets` is `{left, right}` with `auto` or a supported explicit codec. Exclusions remain visible under ignored rows. Effective settings, exclusions, and charsets are echoed in stats. `@csrf_exempt`. |
+| POST | `/api/compare/` | `compare` | Body `{left_dir, right_dir, settings?, exclusions?, charsets?}` → matched/unmatched/ignored/stats JSON. `charsets` is `{left, right}` with `auto` or a supported explicit codec. Excluded entries are always returned under `ignored_left` / `ignored_right`; **Show excluded** is client-only and is not sent to this endpoint. Effective settings, exclusions, and charsets are echoed in stats. `@csrf_exempt`. |
 | GET | `/api/browse/?path=` | `browse` | Directory picker backend. No `path` → drive letters (Windows) or `/` (Unix). Returns `{entries:[{name,path}], current, parent}`. Skips dotfiles + `node_modules`/`__pycache__`/`$recycle.bin`/etc. Returns 403 on `PermissionError`. |
 | GET | `/file-compare/?left=&right=` | `file_compare` | Render the diff viewer. Accepts `unmatched=left\|right`, `hex=1`, and `left_encoding` / `right_encoding`. Content sniffing locks HEX when either side is native binary. |
 | GET | `/api/file-diff/?left=&right=` | `file_diff` | Return aligned text rows or hex payload. Accepts the same unmatched/hex/encoding parameters. Binary content always returns hex regardless of the requested text mode. |
@@ -249,8 +249,8 @@ The unmatched hex variant adds `unmatched: 'left'|'right'` and fills only that s
 
 Consequences:
 - To change the look or behavior of the main page, **edit `comparator/templates/comparator/index.html` directly.** Do **not** edit `comparator/static/comparator/*` expecting it to show up — those files are stale/dead (see §8).
-- The JS uses an **event-delegation** pattern: a single capturing `click` listener on `document` reads `data-action="..."` attributes and dispatches in `handleAction()`. When you add a button, give it a `data-action` and add a case — don't attach per-element listeners.
-- `index.html`'s browse **modal is toggled via inline `style.display`** (`"block"`/`"none"`), *not* via a `.hidden` class. The Engine Settings modal contains four numeric rows plus left/right charset selectors; numeric values persist in `wcEngineSettings`, charsets in `wcTextCharsets`, and both are sent on compare. The Exclusions modal persists patterns and `showExcluded` in `wcExclusions`; its file/folder lists scroll independently. Enabled patterns are always sent, while **Show excluded** only controls whether returned ignored rows render in the table and applies immediately to the current report.
+- The JS uses an **event-delegation** pattern: a single capturing `click` listener on `document` reads `data-action="..."` attributes and dispatches in `handleAction()`. When you add a button, give it a `data-action` and add a case — don't attach per-element listeners. Backdrop actions are valid only when `event.target` is the backdrop itself; never `preventDefault()` for descendant controls, because that breaks native checkbox/select behavior.
+- `index.html`'s browse **modal is toggled via inline `style.display`** (`"block"`/`"none"`), *not* via a `.hidden` class. The Engine Settings modal contains four numeric rows plus left/right charset selectors; numeric values persist in `wcEngineSettings`, charsets in `wcTextCharsets`, and both are sent on compare. The Exclusions modal uses Accept/Cancel draft semantics and persists patterns plus checked-by-default `showExcluded` in `wcExclusions`; its file/folder lists are independently bounded and scrollable. Enabled patterns are always sent, while **Show excluded** only controls whether returned ignored rows render in the table and applies immediately to the current report without another API request.
 - Row double-click opens the file-compare page in a new tab. Matched/unmatched rows carry file paths plus effective `data-left-encoding` / `data-right-encoding`; ignored rows intentionally have no open action.
 - The "Match" column header responds to **double-click** to toggle sorting by content status (`different → minor → identical`). The original order is cached in `APP.lastData`.
 - HTML escaping: `index.html` uses an `esc()` helper (textContent round-trip) plus `escAttr()` for attribute values; `file_compare.html` uses a faster regex-replace `esc()`. Preserve escaping whenever injecting file names, paths, or line content.
@@ -337,7 +337,9 @@ Read this list before you're surprised by something.
 
 11. **Hex alignment is 16-byte-chunk-granular.** A non-16-multiple insertion in a binary shifts every subsequent row, so the tail renders as a long `mod` run instead of a clean gap (documented in §4b). Also, the hex UI hard-assumes 16 bytes/row (`hexCells`, `hex8` offsets) — changing `HEX_BYTES_PER_ROW` alone will break the frontend.
 
-12. **`BINARY_EXTENSIONS` is not a gate.** Content bytes decide text versus binary. Adding a catalogue entry must never make demonstrably textual content binary. Use visible exclusions when a tree contains unwanted artifact noise.
+12. **`BINARY_EXTENSIONS` is not a gate.** Content bytes decide text versus binary. Adding a catalogue entry must never make demonstrably textual content binary. Use exclusions when a tree contains unwanted artifact noise; **Show excluded** decides only whether the resulting ignored rows are rendered.
+
+13. **Ignored visibility is presentation-only.** Never use `showExcluded` to prune scans, alter matching, remove `ignored_left` / `ignored_right`, or change ignored stats. It belongs to `wcExclusions` in the main-page client and must re-render `APP.lastData` without rescanning.
 
 ---
 
@@ -358,7 +360,7 @@ Read this list before you're surprised by something.
 
 | I want to… | Edit |
 |---|---|
-| Change all-file scanning / visible exclusions | `services/file_scanner.py` → `scan_directory` / exclusion helpers |
+| Change all-file scanning / exclusion classification | `services/file_scanner.py` → `scan_directory` / exclusion helpers |
 | Change text/binary or charset detection | `services/binary_detect.py` → `inspect_file` / `looks_binary_bytes` / decoding helpers |
 | Change language-aware LLM system prompts | `services/text_profile.py` + `services/llm_comparator.py` |
 | Change binary matching (dir clue, ranking) | `services/correspondence.py` → Phase 2-BIN block / `_dir_similarity` |
@@ -366,6 +368,7 @@ Read this list before you're surprised by something.
 | Change hex colors / byte highlighting | `file_compare.html` → `hexCells()` + `.hx-z/.hx-a/.hx-p/.ch` CSS, `.fc-hex-*` for the switch |
 | Change the BIN tag / Binary chip on the main page | `templates/comparator/index.html` → `.bin-tag` / `#statBin` / `badge-teal` |
 | Change user-exclusion pattern matching / caps | `services/file_scanner.py` → `normalize_exclusions` / `_excluded` |
+| Change exclusion-list scrolling / **Show excluded** rendering | `templates/comparator/index.html` → `.excl-columns` / `.excl-list` / `wcExclusions` / `renderCurrentResults` |
 | Make matching stricter/looser | `services/correspondence.py` → the 4 threshold constants |
 | Change how similarity is scored | `services/deterministic.py` → `compute_similarity` (token/identifier blend) |
 | Change the `==`/`~=`/`!=` classification | `services/deterministic.py` → `compute_content_status` |
