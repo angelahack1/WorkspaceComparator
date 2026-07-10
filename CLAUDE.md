@@ -6,7 +6,7 @@ Guidance for Claude Code (and humans) working in this repository. Read this befo
 
 ## 1. What this project is
 
-**Current version: 1.6.0** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles, the `index.html` header, and visible Playwright version assertion carry the same number by hand (see §10 "Bump the app version").
+**Current version: 1.7.0** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles, the `index.html` header, and visible Playwright version assertion carry the same number by hand (see §10 "Bump the app version").
 
 **Workspace Comparator** is a **local, single-user Django web tool** that compares two complete project directories ("left" and "right") and works out which files *correspond* to each other — text or native binary, with any extension — even when projects have been restructured, renamed, or migrated between build systems.
 

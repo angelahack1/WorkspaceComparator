@@ -9,7 +9,7 @@ workspaces — surviving renames, moves, extension changes and build-system migr
 Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 
 <p align="center">
-  <img src="https://img.shields.io/badge/VERSION-V1.6.0-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.6.0">
+  <img src="https://img.shields.io/badge/VERSION-V1.7.0-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.7.0">
   <img src="https://img.shields.io/badge/PYTHON-3.12.10-3e6e9e?style=for-the-badge&labelColor=2b2d31&logo=python&logoColor=white" alt="Python 3.12.10">
   <img src="https://img.shields.io/badge/DJANGO-5.2.15-43a047?style=for-the-badge&labelColor=2b2d31&logo=django&logoColor=white" alt="Django 5.2.15">
   <img src="https://img.shields.io/badge/PLATFORM-WIN%2010%20%7C%2011-3e78c2?style=for-the-badge&labelColor=2b2d31&logo=windows&logoColor=white" alt="Platform Windows 10 | 11">
@@ -20,7 +20,7 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
   <img src="https://img.shields.io/badge/LICENSE-MIT-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="License MIT">
 </p>
 
-<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.6 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
+<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.7 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
 
 </div>
 
@@ -35,7 +35,7 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 - ⚙️ **Settings** & 🚫 **Exclusions** dialogs tune matching, select per-side charsets, and control exclusions. Large file/folder pattern lists scroll independently. **Show excluded** starts checked, persists with the patterns, and hides or restores ignored table rows without rescanning or rerunning the comparison.
 - 🔎 **Instant result navigation** — the stats bar builds an extension selector from both projects (`*.*` shows everything, including a dedicated no-extension option). Matched rows use OR semantics, so selecting either side's extension retains a cross-extension correspondence. Case/diacritic-insensitive token and fuzzy search scans every visible column, highlights coincident characters, and scrolls the first hit to the top; Enter and Shift+Enter move through hits.
 
-## 🧭 How v1.6.0 treats every filesystem entry
+## 🧭 How v1.7.0 treats every filesystem entry
 
 | What the bytes contain | Matching behavior | Viewer behavior |
 |---|---|---|
