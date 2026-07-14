@@ -527,6 +527,11 @@ def find_correspondences(
     # candidates may use the same bounded LLM fallback as earlier
     # phases.  A cheap length bound prunes the O(L*R) sweep first.
     for li in list(free_left):
+        # The sweep reads each left file eagerly, so stop as soon as the
+        # right side has no free text candidate at all (empty or
+        # binary-only right projects, or candidates consumed mid-loop).
+        if not any(not right_files[ri].is_binary for ri in free_right):
+            break
         lf = left_files[li]
         if lf.is_binary:
             continue  # renamed binaries are undecidable -- never content-swept
