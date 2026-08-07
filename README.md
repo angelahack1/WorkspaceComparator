@@ -6,7 +6,7 @@
 
 A local web tool that finds the **file correspondences** between two complete
 workspaces — surviving renames, moves, extension changes and build-system migrations — with a
-Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
+Beyond Compare-style diff viewer and an Ollama-backed **AI referee** for ambiguous text pairs. 🧠
 
 <p align="center">
   <img src="https://img.shields.io/badge/VERSION-V1.7.1-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.7.1">
@@ -16,11 +16,11 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 </p>
 <p align="center">
   <img src="https://img.shields.io/badge/PYINSTALLER-6.18.0-9c27e0?style=for-the-badge&labelColor=2b2d31" alt="PyInstaller 6.18.0">
-  <img src="https://img.shields.io/badge/AI%20ENGINE-OLLAMA%20%C2%B7%20GLM--5.2-43a047?style=for-the-badge&labelColor=2b2d31" alt="AI engine: Ollama · glm-5.2:cloud (optional)">
+  <img src="https://img.shields.io/badge/AI%20ENGINE-OLLAMA%20%C2%B7%20GLM--5.2-43a047?style=for-the-badge&labelColor=2b2d31" alt="AI engine: Ollama · glm-5.2:cloud">
   <img src="https://img.shields.io/badge/LICENSE-MIT-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="License MIT">
 </p>
 
-<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.7 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
+<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.7.1 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
 
 </div>
 
@@ -29,11 +29,34 @@ Beyond Compare-style diff viewer and an optional local **AI referee**. 🧠
 - 🧩 **4-phase matching engine** — exact path → same name → fuzzy name → pure content. It catches files that were **renamed** (`StringHelper.java` → `TextUtils.java`) or **moved** (`src/` → `src/main/java/`).
 - 🏷️ **Honest pills** on every match: `==` identical · `~=` only comments/whitespace changed · `!=` really different.
 - 🧾 **No silent drops and no unsupported extensions** — every real file is content-classified and accounted for. Explicit exclusions and `.` / `..` aliases appear in a dark-gray **Ignored Files** section when **Show excluded** is checked.
-- 🤖 **Content-aware AI arbitration** *(optional)* — ambiguous text pairs get a dynamic Ollama system prompt based on detected language/format and charset, even when an extension is custom, absent, or misleading. No Ollama running? The tool falls back to deterministic matching.
+- 🤖 **Content-aware AI arbitration** *(important for ambiguous matches)* — ambiguous text pairs get a dynamic Ollama system prompt based on detected language/format and charset, even when an extension is custom, absent, or misleading. Deterministic fallback keeps the app usable without Ollama, but it can lose correspondences for difficult moved, renamed, or structurally changed text files.
 - 🔢 **True binary files, compared in hex** — actual bytes, not extensions, decide binary status. Native binaries are matched deterministically by exact filename (directory path is the tie-break clue; AI never receives bytes) and open in a locked colored hex viewer.
 - 🔤 **Charset and newline aware** — per-file auto detection handles UTF-8, UTF-16/32 and legacy text, with optional left/right charset overrides. `CRLF`, `LF`, and `CR` are normalized before matching and diffing.
 - ⚙️ **Settings** & 🚫 **Exclusions** dialogs tune matching, select per-side charsets, and control exclusions. Large file/folder pattern lists scroll independently. **Show excluded** starts checked, persists with the patterns, and hides or restores ignored table rows without rescanning or rerunning the comparison.
 - 🔎 **Instant result navigation** — the stats bar builds an extension selector from both projects (`*.*` shows everything, including a dedicated no-extension option). Matched rows use OR semantics, so selecting either side's extension retains a cross-extension correspondence. Case/diacritic-insensitive token and fuzzy search scans every visible column, highlights coincident characters, and scrolls the first hit to the top; Enter and Shift+Enter move through hits.
+
+## 📌 Current v1.7.1 capability baseline
+
+| Area | Current behavior |
+|---|---|
+| Discovery | Recursively accounts for every real file, including dot directories, dependency/build output, extensionless names, and unknown or misleading suffixes |
+| Content routing | Samples bytes first; readable Unicode/legacy content follows the text pipeline and native bytes follow the binary pipeline, independent of extension |
+| Text correspondence | Exact path, same-name, fuzzy-name, and content-only phases combine deterministic structure with bounded Ollama arbitration for ambiguous candidates |
+| Binary correspondence | Never uses the LLM; same-name candidates are ranked by whole-file byte identity and then directory similarity, while renamed binaries remain unmatched |
+| Complete reporting | Matched, unmatched, explicitly excluded, and synthetic `.` / `..` accounting rows are all retained; **Show excluded** controls only rendering |
+| Result exploration | Dynamic extension filtering, cross-extension OR retention, all-column folded/fuzzy search, character highlighting, hit navigation, and status sorting run without a new comparison |
+| Text comparison | Charset-aware, newline-normalized aligned rows, best-line pairing, changed-word highlighting, minor-change handling, context folding, syntax coloring, section navigation, and minimap |
+| Byte comparison | Locked hex for native binaries, optional hex for text, 16-byte rows, byte highlights, aligned gaps, complete-file identity, and explicit 128 KiB render truncation |
+| Reliability | Per-run text caching, bounded LLM candidate sets, noise-floor pruning, an LLM failure circuit breaker, diff cost guards, and a v1.7.1 early exit for empty or binary-only remaining right-side candidates |
+
+### Release lineage
+
+- **v1.7.1:** the Phase 3b content-only sweep stops before eager left-file reads when no free text
+  candidate remains on the right. Empty, exhausted, and binary-only destination pools avoid useless
+  content work while preserving exactly the same result.
+- **v1.7.0:** added the dynamic extension selector and all-column fuzzy search/highlight navigator.
+- **v1.6.0:** made file treatment content-first for every extension, added charset-aware decoding and
+  newline equality, protected binary-only deterministic/hex handling, and made exclusions visible.
 
 ## 🧭 How v1.7.1 treats every filesystem entry
 
@@ -70,6 +93,31 @@ never bypass binary detection.
 All decoded line endings canonicalize before comparison. `HELLO\r\n`, `HELLO\n`, and
 `HELLO\r` are therefore the same logical text and produce `==` with no changed diff rows.
 
+### Matching and AI guardrails
+
+Each file can be consumed by at most one match. The engine runs stronger evidence before broader
+evidence: exact relative path, same-name binary/text handling, fuzzy filenames, then the Phase 3b
+content-only sweep for renamed text. Files still free after those passes are reported as unmatched.
+
+Deterministic comparison strips format-appropriate comments, neutralizes string literals,
+normalizes whitespace, compares tokens, and blends declaration/key overlap when useful. Ambiguous
+text candidates can reach Ollama only after deterministic ranking and a configurable similarity
+floor. Calls are capped per left file, stop after repeated failures, and fall back cleanly when
+Ollama is unavailable. Native binary content is excluded from every AI path.
+
+### Exclusion rules
+
+Patterns support `*` and `?`. Plain patterns match basenames anywhere in a tree; patterns containing
+`/` match forward-slash relative paths, and a matching folder pattern applies to descendants. Enter
+multiple patterns with commas or semicolons, disable a saved pattern without deleting it, and use
+the independently scrollable file/folder lists for large configurations. Accept commits the draft;
+Cancel leaves the previous configuration untouched.
+
+The server still returns every excluded file in `ignored_left` / `ignored_right` with its reason.
+**Show excluded** is stored with the browser-side exclusions and can hide or restore those dark-gray
+rows from the current response without rescanning. The ignored statistics never change with this
+presentation switch.
+
 ## 🚀 Get it — the easy way
 
 Go to **[Releases](../../releases)** → download **`WorkSpaceComparator.exe`** → double-click. Done. 💅
@@ -77,6 +125,9 @@ Go to **[Releases](../../releases)** → download **`WorkSpaceComparator.exe`** 
 No Python, no pip, no installer — one self-contained file. It starts a private server and
 opens your browser at `http://127.0.0.1:9000/` all by itself. Close the console window when
 you're finished.
+
+> **The executable includes Workspace Comparator, but it does not include Ollama, an Ollama
+> account/subscription, or model access.** Complete AI-assisted matching requires the setup below.
 
 ## 🖱️ How to use it
 
@@ -102,6 +153,39 @@ file at a glance. Tune matching and each side's charset with the ⚙ Settings di
 > `demo/InvoicerClassic` against `demo/InvoicerMaven` and watch every match type appear —
 > including a pair of binary logos that light up the **BIN** tag and the hex viewer.
 
+### Result-table controls
+
+| Control | Behavior |
+|---|---|
+| Extension selector | `*.*` restores all rows; `[no extension]` selects suffixless names; a matched pair stays visible when either side has the selected extension |
+| Search box | Searches all five rendered columns after extension and excluded-row filtering; folds case/diacritics and supports literal, token-AND, and bounded in-order fuzzy matching |
+| Enter / Shift+Enter | Moves forward/backward through highlighted result rows; the first hit is automatically placed at the top of the viewport |
+| Escape / clear button | Clears the current table search and highlights |
+| Double-click **Match** | Toggles status order (`different`, `minor`, `identical`) and then restores the original left-anchored order |
+| Double-click a result row | Opens a matched pair or an unmatched single file in a new tab; ignored rows have no open action |
+
+Filtering, searching, sorting, and **Show excluded** are presentation-only operations. They re-render
+the stored result and never mutate paths, matching order, API statistics, or backend settings.
+
+### File-comparison controls
+
+| Control | Behavior | Shortcut |
+|---|---|---|
+| All / Diffs / Same / Context | Selects complete, changed-only, equal-only, or three-line contextual display; Context is the default | `1` / `2` / `3` / `4` |
+| Minor | Treats whitespace-only modifications and blank additions/deletions as equal | `m` |
+| HEX | Opens cached `hexdump -C`-style byte comparison; optional for text, checked and locked for binary | `h` |
+| Prev / Next | Jumps between contiguous difference sections | `p` / `n` |
+| Swap | Exchanges left/right files and their charset settings | button |
+| Minimap | Displays change distribution and the current viewport; click or drag to navigate | pointer |
+
+Click a collapsed unchanged-lines separator to expand that run. Both panes scroll together, and
+every visible row has a corresponding row or explicit hatched gap on the other side. Binary rows
+show 16 bytes plus ASCII, with changed bytes highlighted. Files larger than 128 KiB per side receive
+a visible truncation notice, while equality still comes from a complete byte-for-byte file check.
+
+Unmatched files open on their original side with the opposite pane empty. Text remains syntax
+colored, native binary content opens as locked hex, and text can still be switched to hex manually.
+
 ## 🛠️ Run from source
 
 ```powershell
@@ -110,12 +194,75 @@ python -m playwright install chromium  # one-time browser binary for tests
 python manage.py runserver        # → http://127.0.0.1:8000
 ```
 
-Optional AI referee: `ollama serve` with the `glm-5.2:cloud` model pulled.
+## 🧠 Required Ollama setup for complete matching
 
-The browser and Django application stay local. AI requests go only to the configured Ollama
-endpoint at `127.0.0.1`; because the default model name ends in `:cloud`, Ollama itself may use
-its cloud service and network according to your Ollama account/configuration. Disable LLM
-arbitration with `max_llm_per_file: 0` for deterministic-only operation.
+One of Workspace Comparator's most important correspondence mechanisms is LLM arbitration. The
+deterministic engine resolves obvious pairs, but difficult same-name, fuzzy-name, and content-only
+rename candidates can require the LLM to decide whether two files serve the same purpose. For the
+intended full-quality workflow, install Ollama, sign in with a cloud-enabled account, subscribe for
+adequate cloud usage, and make the configured model available before comparing complex workspaces.
+
+### 1 · Install Ollama
+
+Install [Ollama for Windows](https://ollama.com/download/windows). The native installer runs Ollama
+in the background and exposes its local API at `http://127.0.0.1:11434`, which is the endpoint
+Workspace Comparator calls. The application is supported on Windows 10 or later.
+
+After installation, open a new PowerShell window and verify the CLI:
+
+```powershell
+ollama --version
+ollama serve  # only when the Ollama tray/background service is not already running
+```
+
+Do not start a second `ollama serve` process if the desktop application already owns port 11434.
+
+### 2 · Subscribe to Ollama and sign in
+
+Create an Ollama account and choose a plan on the official [Ollama pricing page](https://ollama.com/pricing).
+As of August 2026, Ollama lists Pro at **US$20/month or US$200/year billed annually**. Pricing and
+limits belong to Ollama and may change, so confirm them on the linked page.
+
+Ollama currently gives Free accounts light cloud usage, but Workspace Comparator uses
+`glm-5.2:cloud`, which Ollama classifies as a **High Usage** model. Treat an **Ollama Pro
+subscription as the recommended operational requirement** for repeated or complex workspace
+comparisons: Pro currently includes larger cloud models, three concurrent cloud models, and 50x
+the cloud usage of Free. Then connect the local installation to the subscribed account:
+
+```powershell
+ollama signin
+```
+
+Cloud models require account authentication. Local access to `127.0.0.1:11434` itself does not use
+an API token; the signed-in Ollama installation authenticates its own cloud requests.
+
+### 3 · Pull and verify the configured model
+
+Workspace Comparator v1.7.1 is configured for one arbitration model:
+[`glm-5.2:cloud`](https://ollama.com/library/glm-5.2). Pull its catalog entry, verify that Ollama
+lists it, and run a quick prompt before starting a large comparison:
+
+```powershell
+ollama pull glm-5.2:cloud
+ollama ls
+ollama run glm-5.2:cloud "Return only the number 100"
+```
+
+The `:cloud` suffix means inference runs through Ollama Cloud rather than downloading the model's
+full weights to your computer. Keep Ollama running while Workspace Comparator works. The app sends
+ambiguous, content-sniffed text samples to the local Ollama API using its `/api/generate` endpoint;
+Ollama then routes that model request to its cloud service.
+
+### What happens without Ollama
+
+The app deliberately fails soft: it continues with deterministic scoring when Ollama is missing,
+signed out, out of usage, unreachable, or returns an invalid answer. That is a compatibility mode,
+not equivalent matching coverage. Ambiguous files may remain unmatched, `LLM` matches may stay at
+zero, and `LLM calls` may stop after the configured failure limit opens the circuit breaker.
+
+Set **Max LLM candidates per file** to `0` only when deterministic-only operation is intentional.
+Otherwise, keep the default of `3` and confirm the stats bar records LLM calls on a comparison that
+contains genuinely ambiguous text pairs.
 
 The compare API accepts the same controls used by the GUI:
 

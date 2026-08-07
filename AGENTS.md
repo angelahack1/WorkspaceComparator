@@ -21,6 +21,22 @@ Portable test truth comes from two repo-owned fixtures: the bundled `demo/Invoic
 
 Both screens are **content-type aware**: every real file is scanned regardless of extension. Actual bytes decide text versus binary, so a Java source file named `.exe` stays text while unknown binary bytes stay binary. Text uses deterministic matching plus bounded LLM arbitration; native binaries use deterministic byte matching only, receive a **BIN** tag, and open in the locked **`hexdump -C`-style hex viewer**.
 
+### Current v1.7.1 capability invariants
+
+Treat these as product contracts, not incidental implementation details:
+
+| Area | Invariant |
+|---|---|
+| Scan completeness | Every real file is returned once as comparable or ignored; extension, dot-directory, dependency/build-output, and extensionless status never silently remove it |
+| Content authority | Sampled bytes decide text versus native binary before suffix hints, charset overrides, deterministic scoring, syntax coloring, or LLM arbitration |
+| Match ownership | A file can be consumed only once; stronger phases run first and result ordering remains anchored to the left workspace |
+| Binary isolation | Binary content never reaches text normalization or Ollama; same-name matching and byte/hex comparison are the only binary paths |
+| Ignored accounting | Exclusions and synthetic `.` / `..` aliases remain in `ignored_*`; `showExcluded` changes only client rendering |
+| Result tools | Extension filtering, search/highlighting, and status sorting always derive from `APP.lastData` and never issue or alter a comparison request |
+| Diff truth | Text alignment owns logical newline equality; binary identity examines complete files even when the visible hex windows are truncated |
+| Graceful degradation | Ollama failure can reduce AI matches but cannot make the comparison request fail or admit binary content to AI |
+| Performance bounds | Per-run text reads are cached, LLM work is bounded, line/hex diffs have cost guards, and Phase 3b exits before eager left reads when no free right-side text candidate remains |
+
 ### It is NOT
 - Not multi-user, not authenticated, not deployed to production. `DEBUG=True`, `ALLOWED_HOSTS=['*']`, a hard-coded insecure `SECRET_KEY`, and `@csrf_exempt` on the compare endpoint all confirm this is a **localhost developer utility**. Do not treat it as internet-facing.
 - Not backed by a database. `DATABASES = {}` — there are **no models, no migrations, no admin, no ORM**. Do not run `migrate` or add models unless you are deliberately introducing persistence.
@@ -116,7 +132,7 @@ Matching is **greedy and order-dependent**. Files start "free"; once matched, bo
 - **Phase 2-BIN — Binary files, same filename, different directory.** Runs BEFORE the text Phase 2 so binaries can never leak into text scoring or LLM arbitration. Binary bytes are opaque to the LLM ("no way to tell the differences with an LLM"), so the **exact filename is the only key**; among several same-named candidates the ranking is `(byte-identical, directory-path similarity)` — identity trumps, then the closest `relative_dir` (SequenceMatcher) wins. Match is `match_type='binary'` (UI labels it *Moved*), similarity = 100 when identical else `binary_similarity()`'s chunk-level estimate (display-only), counted in `stats['binary_matches']`. Binaries with **no same-named counterpart stay unmatched** — Phases 3/3b skip them entirely (a renamed binary is undecidable).
 - **Phase 2 — Same filename, different directory (text).** For each remaining left file, *all* right files with the same filename are scored deterministically first (sorted best-first). If any has `confidence=='high'` and `similarity > 85` → accept as `deterministic`, no LLM. Otherwise **ask the LLM** for at most the top `MAX_LLM_PER_FILE` (3) candidates whose deterministic sim clears the `LLM_MIN_SIM` (15) noise floor; a score `>= 70` → accept as `llm_verified`. If the LLM is unreachable (returns `-1`) but deterministic `> 40`, fall back to accepting as `deterministic`. The bound matters: without it, boilerplate names (`__init__.py`, `index.js`) with hundreds of same-named candidates trigger one LLM round-trip *each* and a compare never finishes.
 - **Phase 3 — Similar filename (fuzzy), any text extension.** For still-unmatched text files, compare filenames with `compute_filename_similarity` and content regardless of extension. Score = `filename_sim*30 + content_sim*0.70`; high-confidence deterministic candidates auto-accept and ambiguous candidates use the bounded LLM fallback.
-- **Phase 3b — Renamed files (content-only).** Text leftovers are swept across any extension. Deterministic similarity `>= CONTENT_SIM_THRESHOLD` produces a content match; otherwise the best bounded candidates can reach the LLM. A cheap length-ratio bound prunes the O(L·R) sweep first. Binaries never enter this phase.
+- **Phase 3b — Renamed files (content-only).** Text leftovers are swept across any extension. Deterministic similarity `>= CONTENT_SIM_THRESHOLD` produces a content match; otherwise the best bounded candidates can reach the LLM. A cheap length-ratio bound prunes the O(L·R) sweep first, and the sweep stops before its eager left-file read whenever `free_right` contains no text candidate (empty, binary-only, or exhausted during the loop). This v1.7.1 optimization changes work performed, not matching semantics. Binaries never enter this phase.
 - **Phase 4 — Leftovers.** Everything still free is reported as `unmatched_left` / `unmatched_right`.
 
 Results (`ComparisonResult`) carry `matched`, `unmatched_left`, `unmatched_right`, `ignored_left`, and `ignored_right`, plus stats for total/comparable/ignored files, exact/deterministic/binary/LLM matches, LLM calls, effective engine settings, exclusions, and charsets. `showExcluded` is not part of this service contract; it is a client-only rendering preference, so ignored entries and counts remain complete even when their table section is hidden. Sorting anchors on the **left side** (the user's original project): primary key = left filename, secondary key = left directory. Unmatched and ignored lists sort independently by filename then directory.
@@ -252,6 +268,7 @@ Consequences:
 - The JS uses an **event-delegation** pattern: a single capturing `click` listener on `document` reads `data-action="..."` attributes and dispatches in `handleAction()`. When you add a button, give it a `data-action` and add a case — don't attach per-element listeners. Backdrop actions are valid only when `event.target` is the backdrop itself; never `preventDefault()` for descendant controls, because that breaks native checkbox/select behavior.
 - `index.html`'s browse **modal is toggled via inline `style.display`** (`"block"`/`"none"`), *not* via a `.hidden` class. The Engine Settings modal contains four numeric rows plus left/right charset selectors; numeric values persist in `wcEngineSettings`, charsets in `wcTextCharsets`, and both are sent on compare. The Exclusions modal uses Accept/Cancel draft semantics and persists patterns plus checked-by-default `showExcluded` in `wcExclusions`; its file/folder lists are independently bounded and scrollable. Enabled patterns are always sent, while **Show excluded** only controls whether returned ignored rows render in the table and applies immediately to the current report without another API request.
 - The stats-bar mini-form is client-only state under `APP.resultView`. `prepareResultTools()` derives extension options from both sides of matched rows plus every unmatched/ignored entry. `*.*` is the reset value and `[no extension]` maps to `__no_extension__`. A matched row passes an extension filter when **either** side matches. Search operates on rendered cells after extension/Show-excluded filtering, using case/diacritic folding, token AND matching, bounded fuzzy subsequences, `<mark class="search-mark">` highlights, and `focusSearchHit()` navigation. It must never mutate `APP.lastData` or trigger `/api/compare/`.
+- `extensionValue()` treats dot names (`.env`), suffixless names, and names ending in `.` as `[no extension]`; extension option counts are file occurrences gathered from both sides, so a matched pair can contribute twice. A multi-token query succeeds only when every token appears somewhere across the row's five cells. Literal phrases win before token/fuzzy matching; tokens shorter than three characters are literal-only. Enter and Shift+Enter wrap through hits, while Escape/clear removes marks and restores the visible-row count.
 - Row double-click opens the file-compare page in a new tab. Matched/unmatched rows carry file paths plus effective `data-left-encoding` / `data-right-encoding`; ignored rows intentionally have no open action.
 - The "Match" column header responds to **double-click** to toggle sorting by content status (`different → minor → identical`). The original order is cached in `APP.lastData`.
 - HTML escaping: `index.html` uses an `esc()` helper (textContent round-trip) plus `escAttr()` for attribute values; `file_compare.html` uses a faster regex-replace `esc()`. Preserve escaping whenever injecting file names, paths, or line content.
@@ -283,6 +300,18 @@ python manage.py runserver 9000     # custom port
 python manage.py check              # sanity check config (pre-approved)
 ```
 No `migrate` needed (no database). No `collectstatic` needed (static isn't served in the live UI).
+
+### Standalone executable and release build
+
+`launcher.py` binds the bundled app to `127.0.0.1:9000`, waits for the server, then opens the default browser five seconds later. `--no-browser` or `WSC_NO_BROWSER=1` suppresses browser launch; `WSC_PORT=<port>` overrides the port. An occupied port is a hard startup error, not a signal to reuse another process.
+
+```powershell
+python build.py                   # install requirements, clean, build, verify
+python build.py --skip-deps       # reuse the current Python environment
+python build.py --no-verify       # skip executable HTTP smoke test (release use discouraged)
+```
+
+`build.py` creates `dist/WorkSpaceComparator.exe` in PyInstaller one-file mode, embeds the complete template directory, declares Django's string-loaded modules as hidden imports, then starts the executable on port 9123 with no browser. Verification requires a successful HTTP response and stable current-UI markers (`btnBrowseLeft`, `btnSettings`, `btnExclusions`). The root-level executable, when maintained as a release artifact, must be copied from the verified `dist` output rather than assumed current.
 
 ### The LLM backend (optional)
 For AI-arbitrated matches, Ollama must be running locally with the model available:
@@ -320,7 +349,7 @@ Read this list before you're surprised by something.
 
 2. **Greedy, order-dependent matching.** The engine matches the first-good candidate per phase rather than solving a global optimal assignment. In projects with many same-named files (`__init__.py`, `index.js`, `package-info.java`), results can depend on scan/iteration order. If precision matters there, this is where to invest (e.g. Hungarian-algorithm assignment).
 
-3. **Performance.** The matching engine now caches file contents per run (a `read()` closure over a dict in `find_correspondences`), and the `_LLMGate` circuit breaker stops LLM calls after 3 consecutive failures — but large workspaces can still trigger many *successful* LLM calls (120 s timeout each). A big migration comparison can take minutes — the frontend loading overlay waits up to 300 s in tests. LLM result caching remains a good target. (`file_diff.py` reads are still uncached — fine, it's two files per request.)
+3. **Performance.** The matching engine caches file contents per run (a `read()` closure over a dict in `find_correspondences`), and the `_LLMGate` circuit breaker stops LLM calls after the configured consecutive-failure limit. Phase 3b also stops before eager left reads as soon as no free right-side text candidate remains. Large workspaces can still trigger many *successful* LLM calls (120 s timeout each) and an O(L·R) renamed-text sweep while both pools remain populated. A big migration comparison can take minutes; the frontend request and browser suites tolerate 300 s. LLM result caching remains a good target. (`file_diff.py` reads are still uncached, which is acceptable for two files per request.)
 
 4. **Windows-first.** Drive-letter browsing is the primary UI path. Unix has a `/` fallback but is less exercised. Portable tests use generated or bundled fixtures; JSON relative directories normalize to forward slashes.
 
@@ -355,6 +384,7 @@ Read this list before you're surprised by something.
 - **No database.** Don't add models/migrations unless persistence is an explicit goal.
 - **The row model is a contract.** `file_diff.py` (producer) and `file_compare.html` (consumer) must move together — if you change row keys (`t/l/r/ls/rs/m`), update both plus the shape docs in §5. The renderer's one-`.fcl`-per-row-per-panel invariant is what keeps the panels aligned.
 - **Keep `index.html` test-stable.** The Playwright suites assert on its element IDs, `data-action` attributes, row classes, and the modal's inline `style.display` toggle. Restyle freely; rename/restructure carefully.
+- **Keep documentation synchronized.** User-visible capability or workflow changes belong in `README.md`; algorithm, API, state, limit, test, or release-contract changes belong in both `AGENTS.md` and `CLAUDE.md`. Historical version notes must remain historically accurate.
 - After changing matching, charset, exclusion, or viewer logic, run the portable hard-stone suite. Use the MAE pair only as an optional large external migration check.
 
 ---
@@ -374,6 +404,7 @@ Read this list before you're surprised by something.
 | Change exclusion-list scrolling / **Show excluded** rendering | `templates/comparator/index.html` → `.excl-columns` / `.excl-list` / `wcExclusions` / `renderCurrentResults` |
 | Change extension filtering / table search / hit highlighting | `templates/comparator/index.html` → `.result-tools` / `APP.resultView` / `prepareResultTools` / `applyTableSearch` / `focusSearchHit` |
 | Make matching stricter/looser | `services/correspondence.py` → the 4 threshold constants |
+| Change content-only sweep pruning / early exit | `services/correspondence.py` → Phase 3b candidate loop before `l_len = len(read(...))` |
 | Change how similarity is scored | `services/deterministic.py` → `compute_similarity` (token/identifier blend) |
 | Change the `==`/`~=`/`!=` classification | `services/deterministic.py` → `compute_content_status` |
 | Change language detection / dynamic system prompt | `services/text_profile.py` → profiles/signals/guidance |
@@ -390,4 +421,6 @@ Read this list before you're surprised by something.
 | Change the diff-viewer UI | `templates/comparator/file_compare.html` (inline CSS+JS) |
 | Add/modify an API route | `comparator/urls.py` + `comparator/views.py` |
 | Change server config | `workspace_comparator/settings.py` |
+| Change standalone startup / port behavior | `launcher.py` → `HOST`, `DEFAULT_PORT`, `_browser_opener`, `main` |
+| Change release bundling / smoke markers | `build.py` → `HIDDEN_IMPORTS`, `UI_MARKERS`, `verify_exe` |
 | Bump the app version | `workspace_comparator/__init__.py` → `__version__` (feeds launcher/build), plus README badge, both template titles, `index.html` header, hard-stone version assertion, and §1 of both agent guides |
