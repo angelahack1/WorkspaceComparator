@@ -101,6 +101,22 @@ _NOISE = frozenset({
 # Public helpers
 # ===================================================================
 
+def extract_type_names(content: str, extension: str) -> Set[str]:
+    """Extract declared types independently of method/key overlap.
+
+    Mask strings before comments so quoted examples and URLs cannot
+    introduce declarations or hide code following a string.
+    """
+    content = _PY_BLOCK_STRING.sub(' ', content)
+    content = re.sub(r'`(?:[^`\\]|\\.)*`', ' ', content, flags=re.DOTALL)
+    content = _STRING_LITERAL.sub(' ', content)
+    content = _strip_comments(content, extension)
+    return set(re.findall(
+        r'\b(?:class|interface|enum|record|struct|trait)\s+([A-Za-z_]\w*)',
+        content,
+    ))
+
+
 def compute_filename_similarity(name1: str, name2: str) -> float:
     """Return 0-1 similarity ratio between two filenames (ignoring extension)."""
     base1 = name1.rsplit('.', 1)[0].lower()

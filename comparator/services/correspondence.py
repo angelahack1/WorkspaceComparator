@@ -23,6 +23,10 @@ Core orchestration module.  Given two directory paths, it:
              identity trumps everything.  The LLM is NEVER consulted
              for binary files.
 
+  Phase 2-ID -- Reserve same-stem text identities across all free files:
+             identical nonempty text first, then declared type identity.
+             Content status and similarity remain independent of pairing.
+
   Phase 2 -- For remaining TEXT files with the SAME filename but
              different directories, runs the deterministic-similarity
              comparison algorithm.  If the deterministic result is
@@ -53,7 +57,10 @@ from .binary_detect import (
     read_text_file,
 )
 from .file_scanner import FileInfo, normalize_exclusions, scan_directory
-from .deterministic import compute_filename_similarity, compute_similarity, compute_content_status
+from .deterministic import (
+    compute_filename_similarity, compute_similarity, compute_content_status,
+    extract_type_names,
+)
 from .llm_comparator import compare_with_llm, is_ollama_available
 
 logger = logging.getLogger(__name__)
@@ -359,6 +366,63 @@ def find_correspondences(
         free_left.discard(li)
         free_right.discard(best_ri)
         result.stats['binary_matches'] += 1
+
+    # ------------------------------------------------------------------
+    # PHASE 2-ID -- reserve strong text identities before greedy scoring.
+    # Rank across all left files to protect identical duplicates from
+    # earlier, weaker matches. Exact paths retain the highest priority.
+    # ------------------------------------------------------------------
+    right_by_stem: Dict[str, List[int]] = {}
+    for ri in sorted(free_right):
+        rf = right_files[ri]
+        if not rf.is_binary:
+            right_by_stem.setdefault(os.path.splitext(rf.filename)[0], []).append(ri)
+
+    type_cache: Dict[str, Set[str]] = {}
+
+    def types(f: FileInfo) -> Set[str]:
+        if f.full_path not in type_cache:
+            type_cache[f.full_path] = extract_type_names(read(f.full_path), f.extension)
+        return type_cache[f.full_path]
+
+    identity_edges = []
+    for li in sorted(free_left):
+        lf = left_files[li]
+        if lf.is_binary:
+            continue
+        stem = os.path.splitext(lf.filename)[0]
+        for ri in right_by_stem.get(stem, []):
+            rf = right_files[ri]
+            same_name = lf.filename == rf.filename
+            lc, rc = read(lf.full_path), read(rf.full_path)
+            identical = bool(lc.strip()) and lc == rc
+            lt, rt = types(lf), types(rf)
+            # Shared helpers alone are insufficient. Prefer the type named
+            # by the file, or a single shared type for snake_case modules.
+            same_type = stem in lt & rt or (len(lt) == 1 and lt == rt)
+            if not (identical or same_type):
+                continue
+            sim, _ = _run_deterministic(lf, rf, read)
+            identity_edges.append((
+                identical, same_name, same_type, sim,
+                _dir_similarity(lf.relative_dir, rf.relative_dir), li, ri,
+            ))
+
+    identity_edges.sort(key=lambda edge: (
+        -int(edge[0]), -int(edge[1]), -int(edge[2]), -edge[3], -edge[4],
+        left_files[edge[5]].relative_path, right_files[edge[6]].relative_path,
+    ))
+    for _identical, _same_name, _same_type, sim, _dir, li, ri in identity_edges:
+        if li not in free_left or ri not in free_right:
+            continue
+        lf, rf = left_files[li], right_files[ri]
+        result.matched.append(MatchResult(
+            lf, rf, 'deterministic', sim,
+            content_status=_content_status(lf, rf, read),
+        ))
+        free_left.remove(li)
+        free_right.remove(ri)
+        result.stats['deterministic_matches'] += 1
 
     # ------------------------------------------------------------------
     # PHASE 2 -- same filename, different directory (text files)

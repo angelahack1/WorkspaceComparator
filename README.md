@@ -9,7 +9,7 @@ workspaces — surviving renames, moves, extension changes and build-system migr
 Beyond Compare-style diff viewer and an Ollama-backed **AI referee** for ambiguous text pairs. 🧠
 
 <p align="center">
-  <img src="https://img.shields.io/badge/VERSION-V1.7.1-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.7.1">
+  <img src="https://img.shields.io/badge/VERSION-V1.7.2-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="Version v1.7.2">
   <img src="https://img.shields.io/badge/PYTHON-3.12.10-3e6e9e?style=for-the-badge&labelColor=2b2d31&logo=python&logoColor=white" alt="Python 3.12.10">
   <img src="https://img.shields.io/badge/DJANGO-5.2.15-43a047?style=for-the-badge&labelColor=2b2d31&logo=django&logoColor=white" alt="Django 5.2.15">
   <img src="https://img.shields.io/badge/PLATFORM-WIN%2010%20%7C%2011-3e78c2?style=for-the-badge&labelColor=2b2d31&logo=windows&logoColor=white" alt="Platform Windows 10 | 11">
@@ -20,7 +20,7 @@ Beyond Compare-style diff viewer and an Ollama-backed **AI referee** for ambiguo
   <img src="https://img.shields.io/badge/LICENSE-MIT-4b8bf5?style=for-the-badge&labelColor=2b2d31" alt="License MIT">
 </p>
 
-<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.7.1 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
+<img src="docs/screenshots/02-results.png" width="100%" alt="Workspace Comparator v1.7.2 results with dynamic extension selector, all-column search, matched files in green, default-visible ignored rows, and binary and matching statistics">
 
 </div>
 
@@ -35,22 +35,25 @@ Beyond Compare-style diff viewer and an Ollama-backed **AI referee** for ambiguo
 - ⚙️ **Settings** & 🚫 **Exclusions** dialogs tune matching, select per-side charsets, and control exclusions. Large file/folder pattern lists scroll independently. **Show excluded** starts checked, persists with the patterns, and hides or restores ignored table rows without rescanning or rerunning the comparison.
 - 🔎 **Instant result navigation** — the stats bar builds an extension selector from both projects (`*.*` shows everything, including a dedicated no-extension option). Matched rows use OR semantics, so selecting either side's extension retains a cross-extension correspondence. Case/diacritic-insensitive token and fuzzy search scans every visible column, highlights coincident characters, and scrolls the first hit to the top; Enter and Shift+Enter move through hits.
 
-## 📌 Current v1.7.1 capability baseline
+## 📌 Current v1.7.2 capability baseline
 
 | Area | Current behavior |
 |---|---|
 | Discovery | Recursively accounts for every real file, including dot directories, dependency/build output, extensionless names, and unknown or misleading suffixes |
 | Content routing | Samples bytes first; readable Unicode/legacy content follows the text pipeline and native bytes follow the binary pipeline, independent of extension |
-| Text correspondence | Exact path, same-name, fuzzy-name, and content-only phases combine deterministic structure with bounded Ollama arbitration for ambiguous candidates |
+| Text correspondence | Exact path, filename/type identity, same-name, fuzzy-name, and content-only phases combine deterministic structure with bounded Ollama arbitration for ambiguous candidates |
 | Binary correspondence | Never uses the LLM; same-name candidates are ranked by whole-file byte identity and then directory similarity, while renamed binaries remain unmatched |
 | Complete reporting | Matched, unmatched, explicitly excluded, and synthetic `.` / `..` accounting rows are all retained; **Show excluded** controls only rendering |
 | Result exploration | Dynamic extension filtering, cross-extension OR retention, all-column folded/fuzzy search, character highlighting, hit navigation, and status sorting run without a new comparison |
 | Text comparison | Charset-aware, newline-normalized aligned rows, best-line pairing, changed-word highlighting, minor-change handling, context folding, syntax coloring, section navigation, and minimap |
 | Byte comparison | Locked hex for native binaries, optional hex for text, 16-byte rows, byte highlights, aligned gaps, complete-file identity, and explicit 128 KiB render truncation |
-| Reliability | Per-run text caching, bounded LLM candidate sets, noise-floor pruning, an LLM failure circuit breaker, diff cost guards, and a v1.7.1 early exit for empty or binary-only remaining right-side candidates |
+| Reliability | Per-run text caching, bounded LLM candidate sets, noise-floor pruning, an LLM failure circuit breaker, diff cost guards, and an early exit for empty or binary-only remaining right-side candidates |
 
 ### Release lineage
 
+- **v1.7.2:** identity-first text matching prioritizes matching filename stems and declared types,
+  keeps heavily rewritten classes paired, and reserves identical duplicates before weaker matches.
+  Includes eight portable regression tests; content scores and difference badges remain truthful.
 - **v1.7.1:** the Phase 3b content-only sweep stops before eager left-file reads when no free text
   candidate remains on the right. Empty, exhausted, and binary-only destination pools avoid useless
   content work while preserving exactly the same result.
@@ -58,7 +61,7 @@ Beyond Compare-style diff viewer and an Ollama-backed **AI referee** for ambiguo
 - **v1.6.0:** made file treatment content-first for every extension, added charset-aware decoding and
   newline equality, protected binary-only deterministic/hex handling, and made exclusions visible.
 
-## 🧭 How v1.7.1 treats every filesystem entry
+## 🧭 How v1.7.2 treats every filesystem entry
 
 | What the bytes contain | Matching behavior | Viewer behavior |
 |---|---|---|
@@ -98,6 +101,14 @@ All decoded line endings canonicalize before comparison. `HELLO\r\n`, `HELLO\n`,
 Each file can be consumed by at most one match. The engine runs stronger evidence before broader
 evidence: exact relative path, same-name binary/text handling, fuzzy filenames, then the Phase 3b
 content-only sweep for renamed text. Files still free after those passes are reported as unmatched.
+
+Before general text scoring, an identity pass protects files with the same filename stem and
+either identical nonempty text or the same declared type. This keeps moved, heavily rewritten
+classes paired even when their structural similarity is low, including extension changes.
+Across duplicate candidates, identical text wins first, followed by the exact filename,
+declared type, content score, and directory similarity. Comments and quoted examples do not
+count as type declarations; a shared helper among otherwise different types is insufficient.
+The `!=` badge on a matched row means the contents changed, not that the files are unrelated.
 
 Deterministic comparison strips format-appropriate comments, neutralizes string literals,
 normalizes whitespace, compares tokens, and blends declaration/key overlap when useful. Ambiguous
@@ -238,7 +249,7 @@ an API token; the signed-in Ollama installation authenticates its own cloud requ
 
 ### 3 · Pull and verify the configured model
 
-Workspace Comparator v1.7.1 is configured for one arbitration model:
+Workspace Comparator v1.7.2 is configured for one arbitration model:
 [`glm-5.2:cloud`](https://ollama.com/library/glm-5.2). Pull its catalog entry, verify that Ollama
 lists it, and run a quick prompt before starting a large comparison:
 

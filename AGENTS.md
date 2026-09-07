@@ -6,7 +6,7 @@ Guidance for Codex (and humans) working in this repository. Read this before mak
 
 ## 1. What this project is
 
-**Current version: 1.7.1** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles, the `index.html` header, and visible Playwright version assertion carry the same number by hand (see §10 "Bump the app version").
+**Current version: 1.7.2** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles, the `index.html` header, and visible Playwright version assertion carry the same number by hand (see §10 "Bump the app version").
 
 **Workspace Comparator** is a **local, single-user Django web tool** that compares two complete project directories ("left" and "right") and works out which files *correspond* to each other — text or native binary, with any extension — even when projects have been restructured, renamed, or migrated between build systems.
 
@@ -21,7 +21,7 @@ Portable test truth comes from two repo-owned fixtures: the bundled `demo/Invoic
 
 Both screens are **content-type aware**: every real file is scanned regardless of extension. Actual bytes decide text versus binary, so a Java source file named `.exe` stays text while unknown binary bytes stay binary. Text uses deterministic matching plus bounded LLM arbitration; native binaries use deterministic byte matching only, receive a **BIN** tag, and open in the locked **`hexdump -C`-style hex viewer**.
 
-### Current v1.7.1 capability invariants
+### Current v1.7.2 capability invariants
 
 Treat these as product contracts, not incidental implementation details:
 
@@ -125,11 +125,13 @@ This is the heart of the app. Entry point: `comparator/services/correspondence.p
 - **Logical newline equality** is global: decoded `CRLF`, `LF`, and lone `CR` canonicalize to `LF` before status, deterministic scoring, LLM prompts, and text diff rows. Binary comparison remains byte-exact.
 - Empty and unreadable files remain reportable rather than disappearing. Content sampling is intentionally bounded, so the scanner does not read every large artifact in full merely to classify it.
 
-### The 4 phases
-Matching is **greedy and order-dependent**. Files start "free"; once matched, both sides are removed from the free pool. Phases run in sequence, each consuming from what the previous left behind:
+### The matching phases
+Matching uses **ordered phases with greedy ownership**. Files start "free"; once matched, both sides are removed from the free pool. Phase 2-ID ranks edges across all free left files; later similarity phases still process left files sequentially:
 
 - **Phase 1 — Exact path match.** Same filename **and** same `relative_dir`. Instant match, `similarity=100`, `match_type='exact_path'`. Highest confidence. Binary pairs get their content status from **byte equality** (`_binary_status`: `identical`/`different`, never `minor`) instead of text normalization.
 - **Phase 2-BIN — Binary files, same filename, different directory.** Runs BEFORE the text Phase 2 so binaries can never leak into text scoring or LLM arbitration. Binary bytes are opaque to the LLM ("no way to tell the differences with an LLM"), so the **exact filename is the only key**; among several same-named candidates the ranking is `(byte-identical, directory-path similarity)` — identity trumps, then the closest `relative_dir` (SequenceMatcher) wins. Match is `match_type='binary'` (UI labels it *Moved*), similarity = 100 when identical else `binary_similarity()`'s chunk-level estimate (display-only), counted in `stats['binary_matches']`. Binaries with **no same-named counterpart stay unmatched** — Phases 3/3b skip them entirely (a renamed binary is undecidable).
+**Phase 2-ID (after 2-BIN, before general text Phase 2):** Index free right text files by case-sensitive filename stem. Accept nonempty identical text or a shared declared type named by the stem (alternatively, the same singleton type set on both sides). Extensions may differ. `extract_type_names()` masks strings and comments before extracting class/interface/enum/record/struct/trait declarations; method/key overlap is not identity. Rank all eligible edges by text identity, exact filename, type identity, content similarity, directory similarity, then stable relative paths. Consume each file once, report `deterministic`, and retain the actual similarity and content status. This protects identical duplicates and heavily rewritten same-class files before weaker matches. It is a ranked greedy pass, not a globally optimal assignment.
+
 - **Phase 2 — Same filename, different directory (text).** For each remaining left file, *all* right files with the same filename are scored deterministically first (sorted best-first). If any has `confidence=='high'` and `similarity > 85` → accept as `deterministic`, no LLM. Otherwise **ask the LLM** for at most the top `MAX_LLM_PER_FILE` (3) candidates whose deterministic sim clears the `LLM_MIN_SIM` (15) noise floor; a score `>= 70` → accept as `llm_verified`. If the LLM is unreachable (returns `-1`) but deterministic `> 40`, fall back to accepting as `deterministic`. The bound matters: without it, boilerplate names (`__init__.py`, `index.js`) with hundreds of same-named candidates trigger one LLM round-trip *each* and a compare never finishes.
 - **Phase 3 — Similar filename (fuzzy), any text extension.** For still-unmatched text files, compare filenames with `compute_filename_similarity` and content regardless of extension. Score = `filename_sim*30 + content_sim*0.70`; high-confidence deterministic candidates auto-accept and ambiguous candidates use the bounded LLM fallback.
 - **Phase 3b — Renamed files (content-only).** Text leftovers are swept across any extension. Deterministic similarity `>= CONTENT_SIM_THRESHOLD` produces a content match; otherwise the best bounded candidates can reach the LLM. A cheap length-ratio bound prunes the O(L·R) sweep first, and the sweep stops before its eager left-file read whenever `free_right` contains no text candidate (empty, binary-only, or exhausted during the loop). This v1.7.1 optimization changes work performed, not matching semantics. Binaries never enter this phase.
@@ -335,7 +337,7 @@ python HardStoneVisiblePlaywrightTest.py # VISIBLE, generated 236-file dataset, 
 - Playwright is declared in `requirements.txt`; install its browser binary separately with `python -m playwright install chromium` if missing.
 
 ### Verifying service and diff-viewer changes
-There are no `pytest` / Django `TestCase` modules yet. Use focused scratch fixtures for pure-service assertions, then run the hard-stone suite for visible end-to-end coverage. `compute_similarity`, `compute_content_status`, content/charset inspection, dynamic prompt generation, `compute_file_diff`, `_align_replace`, `_inline_segments`, and the hex functions are directly testable without a server.
+Run `python -m unittest test_correspondence -v` for portable identity-priority regressions without Ollama. Use focused scratch fixtures for other pure-service assertions, then run the hard-stone suite for visible end-to-end coverage. `compute_similarity`, `compute_content_status`, content/charset inspection, dynamic prompt generation, `compute_file_diff`, `_align_replace`, `_inline_segments`, and the hex functions are directly testable without a server.
 
 The same workflow verifies **hex/binary changes**: `compute_hex_diff()` / `compute_hex_single()` / `is_binary_file()` / `binary_similarity()` are pure; craft byte fixtures (identical pair, single-byte flip, 16-byte-aligned insertion, >128 KB truncation pair, all-zero cost-guard pair, UTF-16 "text" file) and assert on the row signature. For the engine, build a two-folder fixture with same-named binaries in different dirs and assert `match_type='binary'`, the `(byte-identity, dir-clue)` ranking, and `stats['llm_calls'] == 0`. The bundled demo (`demo/InvoicerClassic` ↔ `demo/InvoicerMaven`) includes a binary pair (`app-icon.png` exact match, `branding/logo.png` moved+changed) for eyeballing.
 
@@ -347,7 +349,7 @@ Read this list before you're surprised by something.
 
 1. **`comparator/static/comparator/{css/styles.css, js/app.js}` is DEAD CODE.** It is an *older generation* of the UI and is **not loaded** by `index.html` (which inlines everything). Evidence: `app.js` references element IDs that no longer exist in the template (`btnClear`, `modalBody`, `modalCurrentPath`, `btnModalUp`, `btnModalSelect`…), and renders a **similarity `%` badge** (`sim-badge`) whereas the live UI renders **content-status symbols** (`==`/`~=`/`!=`). Don't edit these files to change the app. Consider deleting them (or wiring them back up) to remove confusion — but confirm intent first.
 
-2. **Greedy, order-dependent matching.** The engine matches the first-good candidate per phase rather than solving a global optimal assignment. In projects with many same-named files (`__init__.py`, `index.js`, `package-info.java`), results can depend on scan/iteration order. If precision matters there, this is where to invest (e.g. Hungarian-algorithm assignment).
+2. **Greedy, order-dependent matching.** Phase 2-ID protects strong identities across all left files, but the engine still uses greedy ownership rather than solving a global optimal assignment. In projects with many same-named files (`__init__.py`, `index.js`, `package-info.java`), results can depend on scan/iteration order. If precision matters there, this is where to invest (e.g. Hungarian-algorithm assignment).
 
 3. **Performance.** The matching engine caches file contents per run (a `read()` closure over a dict in `find_correspondences`), and the `_LLMGate` circuit breaker stops LLM calls after the configured consecutive-failure limit. Phase 3b also stops before eager left reads as soon as no free right-side text candidate remains. Large workspaces can still trigger many *successful* LLM calls (120 s timeout each) and an O(L·R) renamed-text sweep while both pools remain populated. A big migration comparison can take minutes; the frontend request and browser suites tolerate 300 s. LLM result caching remains a good target. (`file_diff.py` reads are still uncached, which is acceptable for two files per request.)
 
