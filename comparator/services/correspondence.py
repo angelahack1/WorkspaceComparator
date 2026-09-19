@@ -61,7 +61,7 @@ from .deterministic import (
     compute_filename_similarity, compute_similarity, compute_content_status,
     extract_type_names,
 )
-from .llm_comparator import compare_with_llm, is_ollama_available
+from .llm_comparator import compare_with_llm, is_ollama_available, OllamaUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -169,24 +169,25 @@ class _LLMGate:
     backend is broken (unreachable, timing out, or answering garbage)
     every escalation costs a full round-trip and fails -- on large
     unrelated trees that means hundreds of doomed calls and a compare
-    that never finishes.  After LLM_FAILURE_LIMIT *consecutive*
-    failures the gate closes and further requests short-circuit to -1,
-    so the run completes on deterministic scoring alone.
+    that never finishes. Transport/HTTP failures close the gate at once;
+    LLM_FAILURE_LIMIT consecutive malformed answers also close it.
+    Further requests short-circuit to -1, so the run completes on
+    deterministic scoring alone. Readiness is checked lazily once.
     """
 
     def __init__(self, stats: Dict, read=_read_file,
-                 failure_limit: int = LLM_FAILURE_LIMIT):
-        self.enabled = is_ollama_available()
+                 failure_limit: int = LLM_FAILURE_LIMIT, enabled: bool = True):
+        self.enabled = enabled
+        self.checked = False
         self.failures = 0
         self.failure_limit = failure_limit
         self.stats = stats
         self.read = read
-        if not self.enabled:
-            logger.warning(
-                "Ollama unavailable -- LLM arbitration disabled for this run")
 
     def score(self, left: FileInfo, right: FileInfo) -> int:
         if not self.enabled:
+            return -1
+        if left.is_binary or right.is_binary:
             return -1
         content_left = self.read(left.full_path)
         content_right = self.read(right.full_path)
@@ -194,12 +195,24 @@ class _LLMGate:
             # Secondary defense: NUL-bearing content must never reach
             # the LLM even if a file changed after the scanner sniff.
             return -1
+        if not self.checked:
+            self.checked = True
+            self.enabled = is_ollama_available()
+            if not self.enabled:
+                logger.warning("Ollama/model unavailable -- using deterministic scoring")
+                return -1
         self.stats['llm_calls'] += 1
-        pct = compare_with_llm(
-            left.filename, content_left,
-            right.filename, content_right,
-            left.text_encoding, right.text_encoding,
-        )
+        try:
+            pct = compare_with_llm(
+                left.filename, content_left,
+                right.filename, content_right,
+                left.text_encoding, right.text_encoding,
+                raise_unavailable=True,
+            )
+        except OllamaUnavailable:
+            self.enabled = False
+            logger.warning("Ollama service failed -- using deterministic scoring for this run")
+            return -1
         if pct == -1:
             self.failures += 1
             if self.failures >= self.failure_limit:
@@ -285,7 +298,8 @@ def find_correspondences(
             _cache[path] = _read_file(path, encodings.get(path, 'auto'))
         return _cache[path]
 
-    gate = _LLMGate(result.stats, read, cfg['llm_failure_limit'])
+    gate = _LLMGate(result.stats, read, cfg['llm_failure_limit'],
+                    enabled=cfg['max_llm_per_file'] > 0)
 
     # Build lookup indexes
     right_by_name: Dict[str, List[int]] = {}
@@ -466,6 +480,16 @@ def find_correspondences(
                 best = MatchResult(lf, rf, 'deterministic', sim, content_status=status)
                 best_ri = ri
                 break
+
+        if best is None:
+            # Explicit offline mode must retain the same deterministic
+            # fallback as an unavailable service, independent of AI limits.
+            if cfg['max_llm_per_file'] == 0 and scored[0][0] > DETERMINISTIC_UNCERTAIN:
+                sim, _confidence, ri = scored[0]
+                rf = right_files[ri]
+                best = MatchResult(lf, rf, 'deterministic', sim,
+                                   content_status=_content_status(lf, rf, read))
+                best_ri = ri
 
         if best is None:
             # Ambiguous: arbitrate only the most promising candidates.

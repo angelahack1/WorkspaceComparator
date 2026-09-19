@@ -205,7 +205,7 @@ python -m playwright install chromium  # one-time browser binary for tests
 python manage.py runserver        # → http://127.0.0.1:8000
 ```
 
-## 🧠 Required Ollama setup for complete matching
+## 🧠 Optional Ollama setup for AI-assisted matching
 
 One of Workspace Comparator's most important correspondence mechanisms is LLM arbitration. The
 deterministic engine resolves obvious pairs, but difficult same-name, fuzzy-name, and content-only
@@ -266,14 +266,21 @@ Ollama then routes that model request to its cloud service.
 
 ### What happens without Ollama
 
-The app deliberately fails soft: it continues with deterministic scoring when Ollama is missing,
-signed out, out of usage, unreachable, or returns an invalid answer. That is a compatibility mode,
-not equivalent matching coverage. Ambiguous files may remain unmatched, `LLM` matches may stay at
-zero, and `LLM calls` may stop after the configured failure limit opens the circuit breaker.
+**Ollama is optional.** The application starts and compares workspaces without an Ollama
+installation, account, or running service. File discovery, deterministic matching, text diffs,
+and binary comparisons remain available; ambiguous AI-only correspondences may remain unmatched.
 
-Set **Max LLM candidates per file** to `0` only when deterministic-only operation is intentional.
-Otherwise, keep the default of `3` and confirm the stats bar records LLM calls on a comparison that
-contains genuinely ambiguous text pairs.
+Set **Max LLM candidates per file** to `0` for fully offline operation: no Ollama health checks
+or generation requests are made, and the same-name deterministic fallback remains active.
+With AI enabled, the engine checks for the configured model only when an ambiguous pair needs it.
+A missing server/model falls back after one check. A connection failure, timeout, missing model,
+authorization/quota HTTP error, or server HTTP error during generation stops further AI calls for
+that comparison. Malformed answers trip the configured consecutive-failure circuit breaker.
+The next comparison can try again, so restarting the application is unnecessary after recovery.
+
+Generation requests use a 2-second connection timeout and a 15-second read-inactivity timeout.
+These bound stalled network operations, not total comparison time. A compatibility retry is made
+only when an older server specifically rejects the `think` parameter.
 
 The compare API accepts the same controls used by the GUI:
 

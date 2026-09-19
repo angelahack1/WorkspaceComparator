@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 OLLAMA_BASE = "http://127.0.0.1:11434"
 OLLAMA_GENERATE = f"{OLLAMA_BASE}/api/generate"
 MODEL_NAME = "glm-5.2:cloud"
+GENERATE_TIMEOUT = (2, 15)  # connect/read inactivity; fail soft on a stalled service
+
+
+class OllamaUnavailable(RuntimeError):
+    """Transport or HTTP failure: further calls in this comparison are futile."""
+
 
 # Maximum characters per file sent to the LLM (keeps context manageable)
 MAX_FILE_CHARS = 6000
@@ -120,10 +126,15 @@ No explanation.  No text.  Just the number."""
 # -----------------------------------------------------------------------
 
 def is_ollama_available() -> bool:
-    """Quick health-check against the Ollama server."""
+    """Check that the local server exposes the configured model."""
     try:
-        r = requests.get(OLLAMA_BASE, timeout=3)
-        return r.status_code == 200
+        r = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=(1, 3))
+        r.raise_for_status()
+        data = r.json()
+        return any(
+            model.get('name') == MODEL_NAME or model.get('model') == MODEL_NAME
+            for model in data.get('models', []) if isinstance(model, dict)
+        )
     except Exception:
         return False
 
@@ -135,6 +146,8 @@ def compare_with_llm(
     content_b: str,
     encoding_a: str = '',
     encoding_b: str = '',
+    *,
+    raise_unavailable: bool = False,
 ) -> int:
     """
     Ask the LLM to score the correspondence between two source files.
@@ -143,7 +156,8 @@ def compare_with_llm(
     -------
     int
         0-100 correspondence percentage, or **-1** when the LLM is
-        unreachable or returns an unparseable answer.
+        unreachable or returns an unparseable answer. The engine uses
+        raise_unavailable to stop immediately after service failures.
     """
     prompt = PROMPT_TEMPLATE.format(
         filename_a=filename_a,
@@ -157,6 +171,11 @@ def compare_with_llm(
 
     try:
         data = _post_generate(prompt, system_prompt)
+        if not isinstance(data, dict) or any(
+                data.get(key) is not None and not isinstance(data[key], str)
+                for key in ('response', 'thinking')):
+            logger.warning("Ollama returned an invalid response shape")
+            return -1
         answer = (data.get("response") or "").strip()
         thinking = (data.get("thinking") or "").strip()
         logger.info("LLM raw answer for %s <-> %s: %r",
@@ -170,11 +189,10 @@ def compare_with_llm(
             )
         return pct
 
-    except requests.exceptions.ConnectionError:
-        logger.warning("Ollama not reachable at %s", OLLAMA_BASE)
-        return -1
-    except requests.exceptions.Timeout:
-        logger.warning("Ollama request timed out")
+    except requests.exceptions.RequestException as exc:
+        logger.warning("Ollama request unavailable: %s", exc)
+        if raise_unavailable:
+            raise OllamaUnavailable(str(exc)) from exc
         return -1
     except Exception as exc:
         logger.exception("Unexpected LLM error: %s", exc)
@@ -212,12 +230,12 @@ def _post_generate(prompt: str, system_prompt: str) -> dict:
     if _send_think_param:
         payload["think"] = False
 
-    resp = requests.post(OLLAMA_GENERATE, json=payload, timeout=120)
-    if resp.status_code == 400 and _send_think_param:
+    resp = requests.post(OLLAMA_GENERATE, json=payload, timeout=GENERATE_TIMEOUT)
+    if resp.status_code == 400 and 'think' in payload and 'think' in resp.text.lower():
         logger.info("Ollama rejected 'think' parameter -- retrying without it")
         _send_think_param = False
         payload.pop("think", None)
-        resp = requests.post(OLLAMA_GENERATE, json=payload, timeout=120)
+        resp = requests.post(OLLAMA_GENERATE, json=payload, timeout=GENERATE_TIMEOUT)
 
     resp.raise_for_status()
     return resp.json()
