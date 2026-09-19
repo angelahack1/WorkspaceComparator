@@ -6,7 +6,7 @@ Guidance for Claude Code (and humans) working in this repository. Read this befo
 
 ## 1. What this project is
 
-**Current version: 1.7.2** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles, the `index.html` header, and visible Playwright version assertion carry the same number by hand (see §10 "Bump the app version").
+**Current version: 1.7.3** — the canonical constant is `__version__` in `workspace_comparator/__init__.py`; the README badge, both template titles, the `index.html` header, and visible Playwright version assertion carry the same number by hand (see §10 "Bump the app version").
 
 **Workspace Comparator** is a **local, single-user Django web tool** that compares two complete project directories ("left" and "right") and works out which files *correspond* to each other — text or native binary, with any extension — even when projects have been restructured, renamed, or migrated between build systems.
 
@@ -21,7 +21,7 @@ Portable test truth comes from two repo-owned fixtures: the bundled `demo/Invoic
 
 Both screens are **content-type aware**: every real file is scanned regardless of extension. Actual bytes decide text versus binary, so a Java source file named `.exe` stays text while unknown binary bytes stay binary. Text uses deterministic matching plus bounded LLM arbitration; native binaries use deterministic byte matching only, receive a **BIN** tag, and open in the locked **`hexdump -C`-style hex viewer**.
 
-### Current v1.7.2 capability invariants
+### Current v1.7.3 capability invariants
 
 Treat these as product contracts, not incidental implementation details:
 

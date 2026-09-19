@@ -287,8 +287,8 @@ def main() -> int:
             v = VisualAsserter(page)
 
             page.goto(base + "/", wait_until="networkidle")
-            v.require("01 header shows Workspace Comparator v1.7.2",
-                      "v1.7.2" in page.locator(".app-header h1").inner_text())
+            v.require("01 header shows Workspace Comparator v1.7.3",
+                      "v1.7.3" in page.locator(".app-header h1").inner_text())
             v.require("02 compare button starts disabled",
                       page.locator("#btnCompare").is_disabled())
 
